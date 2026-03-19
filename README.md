@@ -4,28 +4,39 @@ postmarketOS device packages for the Sony Xperia 10 III (codename: pdx213, SoC: 
 
 ## Status
 
-**First successful boot: 2026-03-18 21:20 PST**
+**First GUI: 2026-03-18 22:30 PST** — greetd login screen visible on device
 
-postmarketOS edge boots to userspace with kernel 6.19.0 (`linux-postmarketos-qcom-sm6350`). SSH accessible over USB networking. Rootfs on SD card (ext4). Display is currently dark (GPU driver takes over from simpledrm but fails to initialize — see Pitfalls below).
+postmarketOS edge with Phosh, running a hybrid boot: Mobian 6.12.68 kernel (for working display) + pmOS initramfs + pmOS rootfs on SD card.
 
-### What works (pmOS kernel 6.19.0)
+### Current state: Hybrid boot (Mobian 6.12.68 kernel + pmOS rootfs)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Display | **Yes** | simpledrm framebuffer, greetd/Phosh login screen renders |
+| Phosh/greetd | **Yes** | Login screen visible, software rendering (llvmpipe) |
+| Rootfs mount | **Yes** | SD card (mmcblk0), ext4, 29.5GB |
+| RAM | **Yes** | 5.3GB detected, 8GB zram swap |
+| Touch | **No** | s6sy761 module version mismatch (rootfs has 6.19.0, kernel is 6.12.68) |
+| USB networking | **No** | Mobian kernel has RNDIS only, pmOS expects ECM |
+| WiFi | **No** | ath10k module version mismatch |
+| Modem | **No** | Module version mismatch |
+| GPU accel | **No** | msm.ko intentionally not loaded (keeps simpledrm alive) |
+
+### Why hybrid?
+
+The pmOS 6.19.0 kernel (`linux-postmarketos-qcom-sm6350`) has `CONFIG_DRM_MSM` **built-in**. It takes over fb0 from simpledrm during boot, then fails to drive the DSI panel (`DSI PLL(0) lock failed, status=0x00000000`), leaving the screen permanently black.
+
+The Mobian 6.12.68 kernel has `CONFIG_DRM_MSM=m` (module). Since msm.ko doesn't auto-load, simpledrm keeps the bootloader-initialized framebuffer alive. Phosh renders on it via software rendering.
+
+### Previous state: pmOS kernel 6.19.0 (SSH only, no display)
 
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Kernel boot | **Yes** | 6.19.0, multi-core, boots in ~1s |
 | Rootfs mount | **Yes** | SD card (mmcblk0), ext4, pmOS_root label |
 | USB networking | **Yes** | CDC ECM, 172.16.42.1, SSH works |
-| SSH | **Yes** | user/password over USB network |
-| Display (fbcon) | Partial | simpledrm works during early boot, then msm_dpu takes over and kills it |
-| GPU | **Broken** | msm_dpu loads, finds a619_gmu.bin + a630_sqe.fw, but a615_zap init fails |
-| SPMI/PMIC | **Yes** | PM6350 arbiter v5 |
-| RAM | **Yes** | 5.3GB detected, zram swap configured |
-| Phosh | Installed | 791 packages, but no display output yet |
-| Touch HW | Probing | himax_hx83112 driver initializes |
-| WiFi | Not tested | Needs firmware |
-| Modem | Not tested | Needs firmware |
-| Bluetooth | Not tested | Needs firmware |
-| Battery | Not tested | Needs kernel module (CONFIG_CHARGER_QCOM_SMB2) |
+| Display | **No** | msm_dpu built-in, kills simpledrm, DSI PLL fails |
+| GPU | **No** | a615_zap.mbn loads but DSI PLL can't lock |
 
 ### What works (verified on Mobian 6.12.68)
 
@@ -177,6 +188,36 @@ The pmOS initramfs does not understand `pmos_boot`/`pmos_root` — it only looks
 ```bash
 python3 -c "f=open('boot.img','rb');d=f.read(4096);print(d[64:64+512].split(b'\x00')[0])"
 ```
+
+## Hybrid boot (workaround for DSI PLL failure)
+
+Until the pmOS kernel's DSI PLL issue is fixed, use the Mobian 6.12.68 kernel with the pmOS rootfs:
+
+```bash
+# Combine Mobian kernel (gzip) + Mobian patched DTB
+cat build/zImage-raw build/device-patched.dtb > build/zImage-hybrid
+
+# Build boot.img with pmOS initramfs
+python3 mkbootimg.py \
+    --kernel build/zImage-hybrid \
+    --ramdisk build/initramfs-pmos \
+    --base 0x10000000 --pagesize 4096 --header_version 0 \
+    --cmdline "androidboot.hardware=qcom androidboot.usbcontroller=a600000.dwc3 \
+        lpm_levels.sleep_disabled=1 service_locator.enable=1 swiotlb=2048 rootwait \
+        pmos_boot_uuid=ae80e9bb-014b-4271-838e-812e4f53e292 \
+        pmos_root_uuid=9a28e679-600d-4b47-9a63-1d638c624286 \
+        pmos_rootfsopts=defaults" \
+    -o build/boot-pmos-hybrid.img
+```
+
+Key files:
+- `build/zImage-raw` — Mobian 6.12.68 kernel (gzip, from Mobian weekly SM6350 image)
+- `build/device-patched.dtb` — DTB with WiFi, rmtfs, remoteproc, UFS patches
+- `build/initramfs-pmos` — pmOS initramfs (from pmbootstrap build)
+
+The Mobian kernel has `CONFIG_DRM_MSM=m` (module) so simpledrm keeps the bootloader framebuffer alive. The pmOS kernel has it built-in, which kills simpledrm when the DSI PLL fails.
+
+**Trade-off**: Display works, but kernel modules from pmOS rootfs (6.19.0) won't load on the 6.12.68 kernel. Touch, WiFi, modem are all modules and won't work until matching 6.12.68 modules are installed.
 
 ## Boot format (critical)
 
