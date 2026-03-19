@@ -153,6 +153,31 @@ echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 
 Adding `console=tty0` or `loglevel=7` to the kernel cmdline causes the phone to reboot immediately after loading btrfs. Without these parameters, the kernel hangs at btrfs (actually the initramfs is running but producing no visible output on the framebuffer).
 
+### 12. boot.img cmdline gets silently overwritten by rebuilds (CRITICAL)
+
+When rebuilding `boot.img` with `mkbootimg.py`, the output file is overwritten in place. If you rebuild with a different cmdline (e.g. switching from UUID-based to LABEL-based root finding) and then later re-flash the same filename, you may be flashing the wrong cmdline without realizing it.
+
+**What happened to us:** We rebuilt `boot-pmos-full.img` multiple times during debugging — once with UUID-based cmdline (which worked), then with LABEL-based cmdline (which doesn't work). We then spent hours reflashing `boot-pmos-full.img` thinking it was the working version. Every boot hung at "Btrfs loaded" and we blamed the rootfs, the firmware, the initramfs — everything except the cmdline.
+
+**Symptoms:** Kernel boots, shows console messages, hangs after "Btrfs loaded". USB networking comes up (ping 172.16.42.1 works) but SSH is refused. The initramfs is stuck searching for a rootfs it can't find.
+
+**The cmdline that works:**
+```
+pmos_boot_uuid=<UUID> pmos_root_uuid=<UUID>
+```
+
+**The cmdline that does NOT work:**
+```
+pmos_boot=LABEL=pmOS_i_boot pmos_root=LABEL=pmOS_root
+```
+
+The pmOS initramfs does not understand `pmos_boot`/`pmos_root` — it only looks for `pmos_boot_uuid`/`pmos_root_uuid`.
+
+**Prevention:** Always verify the cmdline in a boot.img before flashing:
+```bash
+python3 -c "f=open('boot.img','rb');d=f.read(4096);print(d[64:64+512].split(b'\x00')[0])"
+```
+
 ## Boot format (critical)
 
 Sony ABL bootloader on pdx213 requires:
