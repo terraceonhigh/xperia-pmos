@@ -1,5 +1,5 @@
 # Reference: <https://postmarketos.org/devicepkg>
-# Maintainer: terraceonhigh
+# Maintainer: terraceonhigh <terraceonhigh@github.com>
 pkgname=device-sony-pdx213
 pkgdesc="Sony Xperia 10 III"
 pkgver=1

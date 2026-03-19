@@ -4,7 +4,18 @@ postmarketOS device packages for the Sony Xperia 10 III (codename: pdx213, SoC: 
 
 ## Status
 
-**Work in progress.** The sm6350-mainline 6.11 kernel has been verified to boot on this device with the correct boot format parameters. Full pmOS integration is ongoing.
+**Work in progress.** The kernel boots to console (kernel messages visible on display) but does not yet mount the rootfs. Active debugging.
+
+### What works (pmOS kernel 6.19.0)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Kernel boot | Yes | Console output visible, multi-core, ~1s to btrfs init |
+| Display | Yes | simpledrm (bootloader framebuffer) |
+| SPMI/PMIC | Yes | PM6350 arbiter v5 |
+| Touch HW | Probing | himax_hx83112 driver initializes |
+| SDHCI | Yes | Host controller loads |
+| Rootfs mount | **No** | initramfs cannot find rootfs on SD card — debugging |
 
 ### What works (verified on Mobian 6.12.68)
 
@@ -19,7 +30,7 @@ postmarketOS device packages for the Sony Xperia 10 III (codename: pdx213, SoC: 
 | Battery | Partial | PM7250B DTS verified, needs kernel module |
 | GPU | Not yet | msm.ko exists, needs DRM setup |
 
-### Boot format (critical)
+## Boot format (critical)
 
 Sony ABL bootloader on pdx213 requires:
 - **Header version 0** (NOT v2)
@@ -28,6 +39,35 @@ Sony ABL bootloader on pdx213 requires:
 - Page size 4096
 
 Using header v2 or base 0x0 causes silent boot failure. This was the root cause of all previous boot failures with the pmOS sm6350 kernel.
+
+### Known issue: pmbootstrap boot-deploy ignores deviceinfo
+
+As of pmbootstrap 3.9.0, `boot-deploy` generates boot.img with header v2 and base 0x0 regardless of deviceinfo settings. **Workaround**: extract vmlinuz + initramfs + DTB from the pmbootstrap build, then package manually:
+
+```bash
+# Gzip kernel and append DTB
+gzip -c vmlinuz > vmlinuz.gz
+cat vmlinuz.gz sm6350-sony-xperia-lena-pdx213.dtb > zImage-combined
+
+# Build boot.img with correct Sony format
+python3 mkbootimg.py \
+    --kernel zImage-combined \
+    --ramdisk initramfs \
+    --base 0x10000000 \
+    --pagesize 4096 \
+    --header_version 0 \
+    --cmdline "androidboot.hardware=qcom androidboot.usbcontroller=a600000.dwc3 ..." \
+    -o boot.img
+```
+
+### Known issue: sparse rootfs image
+
+`pmbootstrap export` produces a sparse Android image. You must unsparse it before `dd`:
+
+```bash
+simg2img sony-pdx213.img sony-pdx213-raw.img
+dd if=sony-pdx213-raw.img of=/dev/sdX bs=4M status=progress
+```
 
 ## Packages
 
@@ -48,11 +88,13 @@ Proprietary firmware extracted from Sony Open Devices binaries (`SW_binaries_for
 cp -r device-sony-pdx213/ /path/to/pmaports/device/testing/
 cp -r firmware-sony-pdx213/ /path/to/pmaports/device/testing/
 
-# Build with pmbootstrap
-pmbootstrap init          # select sony-pdx213, phosh
+# Build with pmbootstrap (must run on Linux, not macOS)
+pmbootstrap init          # select sony-pdx213, console, edge
 pmbootstrap install
 pmbootstrap export
 ```
+
+**Note:** pmbootstrap does not run on macOS — it requires `kpartx` and `losetup` (Linux-only). Also fails with `arm64` arch on Apple Silicon. Build on a Linux machine.
 
 ## Firmware extraction
 
