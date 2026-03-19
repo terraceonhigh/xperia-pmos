@@ -1,0 +1,2 @@
+# Sony Xperia 10 III specific hexagonrpcd firmware directory
+hexagonrpcd_fw_dir="/usr/share/qcom/sm6350/Sony/pdx213"

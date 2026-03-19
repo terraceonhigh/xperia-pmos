@@ -1,0 +1,60 @@
+# Reference: <https://postmarketos.org/devicepkg>
+# Maintainer: terraceonhigh
+pkgname=device-sony-pdx213
+pkgdesc="Sony Xperia 10 III"
+pkgver=1
+pkgrel=0
+url="https://postmarketos.org"
+license="MIT"
+arch="aarch64"
+options="!check !archcheck"
+depends="
+	firmware-sony-pdx213-adreno
+	firmware-sony-pdx213-adsp
+	firmware-sony-pdx213-bluetooth
+	firmware-sony-pdx213-cdsp
+	firmware-sony-pdx213-hexagonfs
+	firmware-sony-pdx213-ipa
+	firmware-sony-pdx213-modem
+	firmware-sony-pdx213-venus
+	firmware-sony-pdx213-wlan
+	firmware-qcom-adreno-a630
+	hexagonrpcd
+	hexagonrpcd-openrc
+	linux-firmware-ath10k
+	linux-postmarketos-qcom-sm6350
+	mesa-vulkan-freedreno
+	mkbootimg
+	msm-modem
+	msm-modem-uim-selection
+	pd-mapper
+	pd-mapper-openrc
+	postmarketos-base
+	qbootctl
+	qbootctl-openrc
+	swclock-offset
+	tqftpserv
+	tqftpserv-openrc
+"
+makedepends="devicepkg-dev"
+install="$pkgname.post-install"
+source="
+	deviceinfo
+	hexagonrpcd.confd
+	modules-initfs
+"
+
+build() {
+	devicepkg_build $startdir $pkgname
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+
+	install -Dm644 "$srcdir"/hexagonrpcd.confd \
+		"$pkgdir"/etc/conf.d/hexagonrpcd-adsp-sensorspd
+}
+
+sha512sums="
+(run 'pmbootstrap checksum device-sony-pdx213' to generate)
+"
