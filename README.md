@@ -4,18 +4,27 @@ postmarketOS device packages for the Sony Xperia 10 III (codename: pdx213, SoC: 
 
 ## Status
 
-**Work in progress.** The kernel boots to console (kernel messages visible on display) but does not yet mount the rootfs. Active debugging.
+**First successful boot: 2026-03-18 21:20 PST**
+
+postmarketOS edge boots to userspace with kernel 6.19.0 (`linux-postmarketos-qcom-sm6350`). SSH accessible over USB networking. Rootfs on SD card (ext4).
 
 ### What works (pmOS kernel 6.19.0)
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Kernel boot | Yes | Console output visible, multi-core, ~1s to btrfs init |
-| Display | Yes | simpledrm (bootloader framebuffer) |
-| SPMI/PMIC | Yes | PM6350 arbiter v5 |
+| Kernel boot | **Yes** | 6.19.0, multi-core, boots in ~1s |
+| Rootfs mount | **Yes** | SD card (mmcblk0), ext4, pmOS_root label |
+| USB networking | **Yes** | CDC ECM, 172.16.42.1, SSH works |
+| SSH | **Yes** | user/password over USB network |
+| Display (fbcon) | **Yes** | simpledrm framebuffer, kernel console visible during boot |
+| SPMI/PMIC | **Yes** | PM6350 arbiter v5 |
+| RAM | **Yes** | 5.3GB detected, zram swap configured |
 | Touch HW | Probing | himax_hx83112 driver initializes |
-| SDHCI | Yes | Host controller loads |
-| Rootfs mount | **No** | initramfs cannot find rootfs on SD card — debugging |
+| WiFi | Not tested | Needs firmware (not included in this build) |
+| Modem | Not tested | Needs firmware |
+| GPU | Not tested | Needs firmware + DRM setup |
+| Bluetooth | Not tested | Needs firmware |
+| Battery | Not tested | Needs kernel module (CONFIG_CHARGER_QCOM_SMB2) |
 
 ### What works (verified on Mobian 6.12.68)
 
@@ -50,15 +59,22 @@ gzip -c vmlinuz > vmlinuz.gz
 cat vmlinuz.gz sm6350-sony-xperia-lena-pdx213.dtb > zImage-combined
 
 # Build boot.img with correct Sony format
+# cmdline must include pmos_boot_uuid and pmos_root_uuid from the rootfs image
 python3 mkbootimg.py \
     --kernel zImage-combined \
     --ramdisk initramfs \
     --base 0x10000000 \
     --pagesize 4096 \
     --header_version 0 \
-    --cmdline "androidboot.hardware=qcom androidboot.usbcontroller=a600000.dwc3 ..." \
+    --cmdline "androidboot.hardware=qcom androidboot.usbcontroller=a600000.dwc3 \
+        lpm_levels.sleep_disabled=1 service_locator.enable=1 swiotlb=2048 rootwait \
+        pmos_boot_uuid=<UUID-from-rootfs-pmOS_boot> \
+        pmos_root_uuid=<UUID-from-rootfs-pmOS_root> \
+        pmos_rootfsopts=defaults" \
     -o boot.img
 ```
+
+To find the UUIDs, extract the cmdline from pmbootstrap's generated boot.img, or run `lsblk -f` on the written SD card.
 
 ### Known issue: sparse rootfs image
 
