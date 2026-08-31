@@ -3,7 +3,11 @@
 description="Enable the s6sy761 touchscreen (AVDD hold, reset, rebind)"
 
 depend() {
-	after modules udev udev-settle
+	# after greetd on purpose: on Mobian, enabling touch before the compositor was
+	# up did not stick -- phoc coming up crashes the I2C DMA controller and takes
+	# touch with it (the same reason `restart phosh` is banned in favour of a
+	# reboot). greetd provides display-manager, so this orders us behind it.
+	after modules udev udev-settle greetd
 	need localmount
 }
 
