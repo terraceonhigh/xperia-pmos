@@ -26,7 +26,7 @@ next boot. The whole deployment becomes one `fastboot flash boot_a`.
 
 | Path | Purpose |
 |---|---|
-| `/usr/local/lib/s6sy761.ko` | Touch driver, built for `vermagic=6.12.0-sm6350` |
+| `/usr/local/lib/s6sy761.ko` | Touch driver, built for `vermagic=6.12-sm6350` |
 | `/usr/local/bin/enable-touch.py` | Raises + holds the AVDD rail, resets and binds the IC |
 | `/etc/init.d/enable-touch` | OpenRC service |
 | `/etc/runlevels/default/enable-touch` | Symlink enabling it at boot |
@@ -46,14 +46,20 @@ It talks to the GPIO **character device**, not sysfs. The previous attempt at th
 exist. It also skipped the reset/rebind, without which the first probe's I2C DMA
 errors are never cleaned up.
 
-The sequence and its sleeps are load-bearing, copied from the procedure proven on
-Mobian:
+The sequence and its sleeps are load-bearing:
 
 1. TLMM line 10 → output high (AVDD on), fd held open forever
-2. `insmod s6sy761.ko` — the first probe usually fails with I2C DMA errors
-3. unbind the i2c device — discard that bad probe
-4. TLMM line 21 low 0.5s → high, settle 2s — hard-reset the IC
-5. rebind — clean probe
+2. settle 1s, then take TLMM line 21 (reset), also held
+3. reset pulse — low 0.5s, high, **settle 5s** — with AVDD already present
+4. `insmod s6sy761.ko`, so the driver's *first* probe meets a booted IC
+5. only if that failed: unbind → reset → rebind, escalating the settle (5/8/12s)
+
+Note this reverses the Mobian ordering, which reset *after* `insmod`. That was not a
+choice there: the module auto-loaded ~100s into boot, so a reset could only ever come
+afterwards. Here the module is loaded deliberately, so the IC can be rebooted with
+analog power present first. `gpio21` has `bias-pull-up`, so the IC otherwise leaves
+reset at pinctrl time (~0.3s) and boots with no AVDD, which is what made it report a
+zeroed panel.
 
 Two things are resolved at runtime rather than hardcoded, because guessing them wrong
 means poking an unrelated pin: the TLMM gpiochip is found by chip label and line count
