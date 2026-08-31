@@ -1,0 +1,10 @@
+# Large binaries live in the GitHub Release, not the repo
+build/
+*.img
+*.ko
+*.mbn
+*.mdt
+*.b[0-9]*
+
+.DS_Store
+.claude/

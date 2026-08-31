@@ -1,0 +1,14 @@
+#!/sbin/openrc-run
+
+description="Enable the s6sy761 touchscreen (AVDD hold, reset, rebind)"
+
+depend() {
+	after modules udev udev-settle
+	need localmount
+}
+
+start() {
+	ebegin "Enabling touchscreen"
+	/usr/local/bin/enable-touch.py
+	eend $?
+}
