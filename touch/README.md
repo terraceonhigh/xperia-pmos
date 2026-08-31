@@ -257,3 +257,21 @@ Two loose ends when that happens:
 - Touch on Mobian needed a rebind after the greeter→session transition
   (`rebind-touch.sh`). If touch works on a Phosh lock screen and dies after
   unlocking, that is the same problem and needs an equivalent here.
+
+## Confirmed working (2026-08-31)
+
+Touch is confirmed on the Phosh greeter: the on-screen keyboard accepts typed input,
+which requires accurate multitouch coordinates reaching the compositor — not just a
+bound driver. That promotes this from the provisional state recorded above.
+
+What got it there, in the order the problems actually appeared:
+
+1. A matching `s6sy761.ko`, built against **6.12.68** — not merely a module that
+   loads. See the point-release section above; this was the hard part.
+2. Delivery through the initramfs, since hybrid boot has no network a Mac can use.
+3. AVDD raised and *held*, and the IC reset **before** the driver's first probe.
+4. `enable-touch` ordered `after greetd`, so the compositor is up first.
+
+Still unverified: whether touch survives the greeter→session transition after
+logging in. On Mobian that needed `rebind-touch.sh` as a user service. If touch dies
+right after unlocking, that is this same problem.

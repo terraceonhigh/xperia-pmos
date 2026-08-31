@@ -246,7 +246,8 @@ fastboot reboot
 3. pmOS bootsplash animation
 4. **greetd login screen** appears (Phosh compositor running)
 
-Login credentials: `user` / `password` (or whatever you set during `pmbootstrap install`)
+Login credentials: `user` / `1234` (the pmbootstrap default; `password` was
+recorded here previously and is wrong)
 
 ### 11. What does NOT work yet
 

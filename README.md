@@ -16,7 +16,7 @@ postmarketOS edge with Phosh, running a hybrid boot: Mobian 6.12.68 kernel (for 
 | Phosh/greetd | **Yes** | Login screen visible, software rendering (llvmpipe) |
 | Rootfs mount | **Yes** | SD card (mmcblk0), ext4, 29.5GB |
 | RAM | **Yes** | 5.3GB detected, 8GB zram swap |
-| Touch | **Provisional** | Driver binds, IRQ 163 registered and firing. Not yet confirmed with real input in a UI — see [touch/](touch/) |
+| Touch | **Yes** | Confirmed on the Phosh greeter: on-screen keyboard takes input. See [touch/](touch/) |
 | USB networking | **No** | Mobian kernel has RNDIS only, pmOS expects ECM |
 | WiFi | **No** | ath10k module version mismatch |
 | Modem | **No** | Module version mismatch |
