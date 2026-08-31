@@ -9,6 +9,22 @@ depend() {
 
 start() {
 	ebegin "Enabling touchscreen"
-	/usr/local/bin/enable-touch.py
-	eend $?
+	# Everything is teed to a file on the rootfs on purpose. Under hybrid boot the
+	# phone has no usable network from a Mac (RNDIS only) and, before Phosh is
+	# installed, nothing on screen either -- so the only way to find out what
+	# happened is to power down, pull the SD card and read this log.
+	mkdir -p /var/log
+	/usr/local/bin/enable-touch.py > /var/log/enable-touch.log 2>&1
+	rc=$?
+	{
+		echo "--- exit status: $rc"
+		echo "--- kernel: $(uname -r)"
+		echo "--- dmesg (s6sy761) ---"
+		dmesg | grep -i s6sy
+		echo "--- dmesg (i2c errors) ---"
+		dmesg | grep -iE "i2c|geni" | tail -20
+		echo "--- input devices ---"
+		cat /proc/bus/input/devices
+	} >> /var/log/enable-touch.log 2>&1
+	eend $rc
 }

@@ -65,8 +65,16 @@ if [ -f /touch-payload-s6sy761.ko ]; then
 			/sysroot/etc/runlevels/default/enable-touch
 	then
 		echo "$LOG_PREFIX pdx213 touch payload installed" > /dev/kmsg
+		# kmsg does not survive a power cycle, and under hybrid boot there is no
+		# network and no GUI to read it from. Leave a marker on the card instead.
+		mkdir -p /sysroot/var/log
+		echo "payload installed by initramfs" \\
+			> /sysroot/var/log/touch-payload.status
 	else
 		echo "$LOG_PREFIX pdx213 touch payload FAILED" > /dev/kmsg
+		mkdir -p /sysroot/var/log 2>/dev/null
+		echo "payload install FAILED in initramfs" \\
+			> /sysroot/var/log/touch-payload.status 2>/dev/null
 	fi
 fi
 # --- end pdx213 touchscreen payload ---
