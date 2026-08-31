@@ -226,3 +226,34 @@ driver stage is separate. The two log lines are trustworthy: the install command
 - Only the pre-Phosh rootfs image could be inspected offline (the live SD card is the
   expanded, Phosh-installed version). `python3` was confirmed present there, and
   package installs only add, so the interpreter the script needs will be there.
+
+## Result (provisional, 2026-08-31)
+
+The driver loads, probes cleanly on the first attempt, and the interrupt is live:
+
+```
+DIAG irq=163 max_x=1080 max_y=2520 tx=14
+OK: touch enabled on first probe (event3)
+--- exit status: 0
+
+163:  6  0 0 0 0 0 0 0   msmgpio  22  Level   s6sy761_irq
+```
+
+`event3` carries `PROP=2` (`INPUT_PROP_DIRECT`) with the multitouch ABS bits set, and
+there are no driver or I²C DMA errors.
+
+**This is deliberately not called "working" yet.** What is established is that the
+driver binds, the IC reports its real panel geometry, and the interrupt registers and
+fires. What is *not* established is that touching the glass produces correct
+coordinates in a user interface — the six interrupt counts could be initialisation
+chatter rather than real reports, nothing has read `event3`, and this rootfs has no UI
+to touch. Promote this to "working" only after confirming it under Phosh.
+
+Two loose ends when that happens:
+
+- The deployed module still carries the `DIAG` `dev_info`. Harmless (one log line per
+  probe), so it can ride along until the next flash rather than spending a cycle to
+  remove it. Rebuild without `DIAG=1` for a clean module.
+- Touch on Mobian needed a rebind after the greeter→session transition
+  (`rebind-touch.sh`). If touch works on a Phosh lock screen and dies after
+  unlocking, that is the same problem and needs an equivalent here.
