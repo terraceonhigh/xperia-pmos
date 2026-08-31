@@ -87,13 +87,33 @@ The target ABI, measured from modules known to load on this kernel (`msm.ko`,
 | `CONFIG_MODVERSIONS` | off — no symbol CRCs to match |
 | `CONFIG_MODULE_SIG` | off — unsigned modules load |
 
-`touch/build-module.sh` builds it. It uses **6.12.107** source even though the kernel
-is 6.12.68, which is safe here for a non-obvious reason: Debian sets `KERNELRELEASE`
-to plain `6.12-sm6350` with no point version — hence the odd `uname -r` — so both
-trees yield the same vermagic, and 6.12.107's own modules were verified to have the
-same 1152-byte `struct module`. 6.12.68 has rotated out of the archive. Building from
-the orig tarball needs `SUBLEVEL` blanked and `LOCALVERSION="-sm6350"`, or vermagic
-comes out as `6.12.107` and will not load.
+`touch/build-module.sh` builds it, from **vanilla 6.12.68** source (kernel.org) plus
+the running kernel's own config.
+
+### The point release must match, and vermagic will not tell you
+
+This cost two hardware cycles, so it is worth being explicit. Debian sets
+`KERNELRELEASE` to plain `6.12-sm6350` with **no point version** — that is why
+`uname -r` looks like that — so a module built against *any* 6.12.x tree gets the
+same vermagic. Combined with `MODVERSIONS` being off, a module built against the
+wrong point release **loads without complaint** and then reads structure fields at
+the wrong offsets.
+
+Measured with `touch/check-struct-offsets.sh`:
+
+| | 6.12.68 | 6.12.107 |
+|---|---|---|
+| `sizeof(struct device)` | 744 | 768 |
+| `offsetof(struct i2c_client, irq)` | 780 | 804 |
+
+A 6.12.107-built module read `client->irq` 24 bytes past the real field, got garbage
+(`-50985`), and `devm_request_threaded_irq` failed with `-EINVAL`. `adapter` and
+`addr` sit *before* the embedded `struct device`, which is why I²C worked perfectly
+and only the interrupt broke — a confusing signature worth recognising.
+
+The build now asserts `offsetof(struct i2c_client, irq) == 780` and refuses to ship
+the module otherwise. Building from a tarball also needs `SUBLEVEL` blanked and
+`LOCALVERSION="-sm6350"`, or vermagic comes out as `6.12.68` and will not load.
 
 Run it on a Linux host with podman (macOS can't run kbuild, and Debian's prebuilt
 kbuild host tools are Linux binaries):

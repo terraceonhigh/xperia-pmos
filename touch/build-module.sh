@@ -8,16 +8,24 @@
 # ships this module, and the one in the xperia-mobian release was built against a
 # different tree (vermagic 6.12.0-sm6350, struct module 1088) and cannot load.
 #
-# Why 6.12.107 source for a 6.12.68 kernel: Debian sets KERNELRELEASE to plain
-# "6.12-sm6350" with no point version, so both produce the *same* vermagic. Verified
-# that 6.12.107's own modules have an identical 1152-byte struct module, and that
-# CONFIG_MODVERSIONS and CONFIG_MODULE_SIG are both off -- so there are no symbol CRCs
-# or signatures to match either. 6.12.68 has rotated out of the archive.
+# The source MUST match the running kernel's point release, 6.12.68. An earlier
+# version of this script used 6.12.107 (the oldest still in Mobian's archive) on the
+# reasoning that vermagic and struct module size both matched, so the module would
+# load -- and it did load. But loading is not the same as being ABI-compatible:
+# measured with touch/check-struct-offsets.sh, sizeof(struct device) is 744 in
+# 6.12.68 and 768 in 6.12.107, which shifts offsetof(struct i2c_client, irq) from 780
+# to 804. The module read client->irq 24 bytes past the real field and got garbage
+# (-50985), so devm_request_threaded_irq failed with -EINVAL. Fields before the
+# embedded struct device (adapter, addr) read fine, which is why I2C worked and only
+# the interrupt broke. CONFIG_MODVERSIONS is off, so nothing catches this at load
+# time. Mobian's 6.12.68-1 has rotated out of the archive; vanilla 6.12.68 from
+# kernel.org plus the running kernel's own config gives the right layout.
 
 set -euo pipefail
 
-VER=6.12.107
-BASE=https://repo.mobian.org/pool/main/l/linux-6.12-sm6350
+VER=6.12.68
+BASE=https://cdn.kernel.org/pub/linux/kernel/v6.x
+SRC=src-$VER
 WORK=${WORK:-$HOME/xperia-modbuild}
 IMAGE=docker.io/library/debian:trixie
 
@@ -25,14 +33,14 @@ mkdir -p "$WORK"
 cd "$WORK"
 
 echo "=== fetching sources into $WORK ==="
-[ -f "linux-6.12-sm6350_${VER}.orig.tar.gz" ] || \
-	curl -fL --retry 3 -O "$BASE/linux-6.12-sm6350_${VER}.orig.tar.gz"
-# The .deb is only here for its /boot/config-6.12-sm6350, so the module is built
-# against the same configuration the running kernel uses.
-[ -f linux-image.deb ] || \
-	curl -fL --retry 3 -o linux-image.deb \
-		"$BASE/linux-image-6.12-sm6350_${VER}-1_arm64.deb"
-ls -la linux-6.12-sm6350_${VER}.orig.tar.gz linux-image.deb
+[ -f "linux-${VER}.tar.xz" ] || \
+	curl -fL --retry 3 -O "$BASE/linux-${VER}.tar.xz"
+# The running kernel's own config, so struct layouts match what is actually booted.
+[ -f config-mobian-working ] || {
+	echo "config-mobian-working missing -- copy the running kernel's config here"
+	exit 1
+}
+ls -la "linux-${VER}.tar.xz" config-mobian-working
 
 # The inner script is written to a file rather than inlined, to keep one level of
 # shell quoting instead of three.
@@ -48,13 +56,12 @@ cd /work
 export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 
 # Resumable: preparing the tree takes minutes, so only do it once.
-if [ ! -f src/.prepared ]; then
-	rm -rf src && mkdir src
-	tar xf linux-6.12-sm6350_*.orig.tar.gz -C src --strip-components=1
-	dpkg-deb -x linux-image.deb debx
-	cp debx/boot/config-6.12-sm6350 src/.config
+if [ ! -f "$SRC/.prepared" ]; then
+	rm -rf "$SRC" && mkdir "$SRC"
+	tar xf "linux-${VER}.tar.xz" -C "$SRC" --strip-components=1
+	cp config-mobian-working "$SRC/.config"
 
-	cd src
+	cd "$SRC"
 	# Blank SUBLEVEL so KERNELVERSION is "6.12" rather than "6.12.107"; with
 	# LOCALVERSION="-sm6350" that yields the release the running kernel wants.
 	sed -i 's/^SUBLEVEL = .*/SUBLEVEL =/' Makefile
@@ -69,8 +76,8 @@ if [ ! -f src/.prepared ]; then
 fi
 
 echo "--- release string check (must be 6.12-sm6350) ---"
-cat src/include/config/kernel.release
-cat src/include/generated/utsrelease.h
+cat "$SRC/include/config/kernel.release"
+cat "$SRC/include/generated/utsrelease.h"
 
 # Build the driver as an *external* module: one source file, one modpost run, instead
 # of compiling every module in the tree. KBUILD_MODPOST_WARN is required because
@@ -78,7 +85,7 @@ cat src/include/generated/utsrelease.h
 # fail; the symbols it cannot see (i2c, input, regulator) are all built into the
 # running kernel, which is verified separately from its config.
 mkdir -p mod
-cp src/drivers/input/touchscreen/s6sy761.c mod/
+cp "$SRC/drivers/input/touchscreen/s6sy761.c" mod/
 echo 'obj-m += s6sy761.o' > mod/Makefile
 
 # DIAG=1 adds one dev_info before the IRQ request. Probe fails there with -EINVAL on
@@ -91,7 +98,33 @@ if [ "${DIAG:-0}" = "1" ]; then
 	grep -q "DIAG irq=" mod/s6sy761.c || { echo "DIAG patch did not apply"; exit 1; }
 	echo "DIAG instrumentation applied"
 fi
-make -C src M=/work/mod KBUILD_MODPOST_WARN=1 modules
+make -C "$SRC" M=/work/mod KBUILD_MODPOST_WARN=1 modules
+
+# Guard the bug that cost two hardware cycles: a module built against the wrong point
+# release loads happily (vermagic and struct module size both match) but reads struct
+# fields at the wrong offsets. 780 is offsetof(struct i2c_client, irq) for the kernel
+# this was validated against; 6.12.107 gives 804. If this trips, the tree is wrong --
+# do not ship the module, whatever the other checks say.
+EXPECT_IRQ_OFFSET=780
+mkdir -p off
+cat > off/probe.c <<'EOF'
+#include <linux/i2c.h>
+#include <linux/module.h>
+char probe_IRQ_OFFSET[offsetof(struct i2c_client, irq)];
+EOF
+echo 'obj-m += probe.o' > off/Makefile
+rm -f off/probe.o
+make -C "$SRC" M=/work/off probe.o >/dev/null 2>&1 || true
+if [ -f off/probe.o ]; then
+	got=$(readelf -sW off/probe.o | awk '/probe_IRQ_OFFSET/ { print $3 }')
+	echo "offsetof(struct i2c_client, irq) = $got (expected $EXPECT_IRQ_OFFSET)"
+	if [ "$got" != "$EXPECT_IRQ_OFFSET" ]; then
+		echo "ABI MISMATCH: built against the wrong kernel point release"
+		exit 1
+	fi
+else
+	echo "WARNING: could not verify struct offsets"
+fi
 
 cp mod/s6sy761.ko /work/s6sy761.ko
 INNER
@@ -99,7 +132,7 @@ INNER
 echo "=== building in $IMAGE ==="
 # DIAG must be passed in explicitly: podman does not inherit the host environment,
 # and the instrumentation switch is read inside the container.
-podman run --rm -e "DIAG=${DIAG:-0}" -v "$WORK:/work:z" -w /work "$IMAGE" \
+podman run --rm -e "DIAG=${DIAG:-0}" -e "VER=$VER" -e "SRC=$SRC" -v "$WORK:/work:z" -w /work "$IMAGE" \
 	bash /work/inner.sh
 
 echo "=== result ==="
