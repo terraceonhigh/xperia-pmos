@@ -109,6 +109,33 @@ fi
 # --- end pdx213 authorized key ---
 '''
 
+PWHASH_BLOCK = '''
+# --- pdx213 password reset (injected by touch/build-touch-boot.py) ---
+if [ -f /touch-payload-pwhash ]; then
+	H=$(cat /touch-payload-pwhash)
+	# awk -v is safe for a hash containing $6$: the shell expands "$H" once, and the
+	# result is not re-expanded. Written back with `cat >` rather than mv so the
+	# original inode, owner (root:shadow) and mode are preserved.
+	if awk -v h="$H" -F: 'BEGIN{OFS=":"} $1=="user"{$2=h} {print}' \\
+			/sysroot/etc/shadow > /tmp/shadow.new \\
+		&& [ -s /tmp/shadow.new ] \\
+		&& grep -q "^user:" /tmp/shadow.new \\
+		&& cat /tmp/shadow.new > /sysroot/etc/shadow
+	then
+		echo "$LOG_PREFIX pdx213 password reset for user" > /dev/kmsg
+		mkdir -p /sysroot/var/log
+		echo "password reset applied" > /sysroot/var/log/pwreset.status
+		sync
+	else
+		echo "$LOG_PREFIX pdx213 password reset FAILED" > /dev/kmsg
+		mkdir -p /sysroot/var/log 2>/dev/null
+		echo "password reset FAILED" > /sysroot/var/log/pwreset.status 2>/dev/null
+	fi
+	rm -f /tmp/shadow.new
+fi
+# --- end pdx213 password reset ---
+'''
+
 SWITCH_ROOT_LINE = 'exec switch_root /sysroot "$init"'
 MARKER = "pdx213 touchscreen payload"
 
@@ -301,7 +328,7 @@ def patch_init(text, blocks=None):
 
 
 def build(boot_path, ko_path, out_path, reference_ko=None,
-          authorized_key=None):
+          authorized_key=None, pwhash_file=None):
     orig = open(boot_path, "rb").read()
     header, kernel, ramdisk_gz, page = boot_split(orig)
     print(f"input  {boot_path}")
@@ -324,7 +351,8 @@ def build(boot_path, ko_path, out_path, reference_ko=None,
     init = by_name.get("init_2nd.sh")
     if init is None:
         raise ValueError("initramfs has no init_2nd.sh")
-    blocks = [DEPLOY_BLOCK] + ([AUTHKEY_BLOCK] if authorized_key else [])
+    blocks = [DEPLOY_BLOCK] + ([AUTHKEY_BLOCK] if authorized_key else []) \
+        + ([PWHASH_BLOCK] if pwhash_file else [])
     init.data = patch_init(init.data.decode(), blocks).encode()
     print(f"  patched init_2nd.sh ({len(blocks)} block(s))")
 
@@ -334,6 +362,8 @@ def build(boot_path, ko_path, out_path, reference_ko=None,
     payload = dict(PAYLOAD)
     if authorized_key:
         payload["touch-payload-authkey"] = (0o100644, authorized_key)
+    if pwhash_file:
+        payload["touch-payload-pwhash"] = (0o100600, pwhash_file)
     for i, (name, (mode, src)) in enumerate(sorted(payload.items())):
         if src is None:
             path = ko_path
@@ -359,11 +389,12 @@ def build(boot_path, ko_path, out_path, reference_ko=None,
     with open(out_path, "wb") as f:
         f.write(out)
     print(f"output {out_path} ({len(out)} bytes)")
-    verify(orig, out, ko_path, reference_ko, authorized_key)
+    verify(orig, out, ko_path, reference_ko, authorized_key, pwhash_file)
     return out_path
 
 
-def verify(orig, out, ko_path, reference_ko=None, authorized_key=None):
+def verify(orig, out, ko_path, reference_ko=None, authorized_key=None,
+           pwhash_file=None):
     """Re-read the built image and prove the things that have burned this repo."""
     print("verifying:")
     o_hdr, o_kernel, o_rd, _ = boot_split(orig)
@@ -417,6 +448,14 @@ def verify(orig, out, ko_path, reference_ko=None, authorized_key=None):
                        and names["touch-payload-authkey"].data == want))
         checks.append(("authkey deploy block injected",
                        "pdx213 authorized key" in
+                       names["init_2nd.sh"].data.decode()))
+    if pwhash_file:
+        want = open(pwhash_file, "rb").read()
+        checks.append(("password hash payload matches source",
+                       "touch-payload-pwhash" in names
+                       and names["touch-payload-pwhash"].data == want))
+        checks.append(("password reset block injected",
+                       "pdx213 password reset" in
                        names["init_2nd.sh"].data.decode()))
     old_entries, _, _, _ = cpio_parse(gzip.decompress(o_rd))
     checks.append(("no original file lost",
@@ -487,6 +526,9 @@ def main():
                     "against the payload (e.g. msm.ko from the Mobian initrd)")
     ap.add_argument("--authorized-key", help="public key file to install for "
                     "root and user (uid 10000) in the rootfs")
+    ap.add_argument("--set-user-password", metavar="HASHFILE",
+                    help="file holding a crypt(3) hash; replaces the "
+                    "password of `user` in the rootfs /etc/shadow")
     ap.add_argument("--selftest", action="store_true", help="run internal checks")
     a = ap.parse_args()
     if a.selftest:
@@ -494,7 +536,9 @@ def main():
     if not (a.boot and a.ko and a.out):
         ap.error("--boot, --ko and --out are all required")
     build(a.boot, a.ko, a.out, a.reference_ko,
-          os.path.abspath(a.authorized_key) if a.authorized_key else None)
+          os.path.abspath(a.authorized_key) if a.authorized_key else None,
+          os.path.abspath(a.set_user_password)
+          if a.set_user_password else None)
 
 
 if __name__ == "__main__":
