@@ -275,3 +275,34 @@ What got it there, in the order the problems actually appeared:
 Still unverified: whether touch survives the greeter→session transition after
 logging in. On Mobian that needed `rebind-touch.sh` as a user service. If touch dies
 right after unlocking, that is this same problem.
+
+## The Phosh *session* does not start (pre-existing)
+
+Logging in gets gnome-session's "Oh no! Something has gone wrong" screen, and touch is
+dead on it.
+
+Worth being clear that this is not a regression: every claim in this repo's history
+stops at the greeter — `REPRODUCING.md`'s "What you should see" ends at "greetd login
+screen appears", and the README says "Login screen visible". Nobody had logged in
+before, because until the password was reset there was no way to. So the session
+failing is newly *visible*, not newly broken.
+
+Two separate things are now known:
+
+- **Touch works.** Confirmed by typing a numeric password on the greeter's keypad,
+  which needs accurate multitouch coordinates reaching the compositor.
+- **The session fails**, and touch dies with it. Touch dying there is expected from
+  the Mobian notes (a second compositor starting crashes the I²C DMA controller, the
+  same reason `restart phosh` is banned in favour of a reboot). It cannot be fixed or
+  even measured until the session itself starts.
+
+Diagnosing the session needs its stderr, which currently goes nowhere: `syslog` is not
+in the default runlevel, `rc_logger` is off, and there is no `.xsession-errors`. The
+session definitely runs far enough to create `~/.cache/mesa_shader_cache`, `glycin`
+and `gstreamer-1.0`, so it is getting into GL/rendering before dying — llvmpipe
+software rendering on simpledrm being the obvious suspect.
+
+First step for anyone picking this up: enable logging before anything else. `syslog`
+in the default runlevel and `rc_logger=YES` in `/etc/rc.conf` can both be installed by
+the initramfs (see `--authorized-key` for the pattern), so it costs one flash and no
+network.
