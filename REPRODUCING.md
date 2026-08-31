@@ -246,8 +246,13 @@ fastboot reboot
 3. pmOS bootsplash animation
 4. **greetd login screen** appears (Phosh compositor running)
 
-Login credentials: `user` / `1234` (the pmbootstrap default; `password` was
-recorded here previously and is wrong)
+Login credentials: `user` / `1234`.
+
+**The password must be numeric.** The phrog greeter offers only a numeric keypad --
+its alphabet toggle is greyed out, because no on-screen keyboard is installed
+(`squeekboard`). Setting a password containing letters locks you out of the greeter
+even though it is otherwise valid. Install `squeekboard` if you want a full keyboard
+there.
 
 ### 11. What does NOT work yet
 
