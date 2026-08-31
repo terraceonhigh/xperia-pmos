@@ -84,6 +84,46 @@ fi
 SWITCH_ROOT_LINE = 'exec switch_root /sysroot "$init"'
 MARKER = "pdx213 touchscreen payload"
 
+# The release's build--s6sy761.ko says 6.12.0-sm6350, but the running kernel wants
+# 6.12-sm6350 (confirmed against msm.ko, dm-mod.ko, rmnet.ko and qcom_stats.ko taken
+# from the Mobian initrd for this kernel). Loading the wrong one fails with
+# "Invalid module format" / "this_module section size must match", so the expected
+# string is checked exactly rather than assumed.
+EXPECT_VERMAGIC = "6.12-sm6350"
+
+
+# --------------------------------------------------------------------- ELF
+
+def elf_section_size(data, want):
+    """Size of a named section in an ELF64 little-endian object, or None.
+
+    Used to compare .gnu.linkonce.this_module against a module known to load on the
+    target kernel: that section holds `struct module`, and the kernel refuses any
+    module whose copy is a different size than the one it was built with. Comparing
+    it offline catches a config/source mismatch that vermagic alone can miss.
+    """
+    if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        return None
+    shoff = struct.unpack_from("<Q", data, 0x28)[0]
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
+    # Section header string table, to resolve sh_name offsets.
+    stroff = struct.unpack_from("<Q", data, shoff + shstrndx * shentsize + 0x18)[0]
+    for i in range(shnum):
+        sh = shoff + i * shentsize
+        name_off = struct.unpack_from("<I", data, sh)[0]
+        end = data.index(b"\0", stroff + name_off)
+        if data[stroff + name_off:end].decode() == want:
+            return struct.unpack_from("<Q", data, sh + 0x20)[0]
+    return None
+
+
+def ko_vermagic(data):
+    marker = b"vermagic="
+    i = data.find(marker)
+    if i < 0:
+        return None
+    return data[i + len(marker):data.index(b"\0", i)].decode(errors="replace")
+
 
 # ---------------------------------------------------------------- newc cpio
 
@@ -229,7 +269,7 @@ def patch_init(text):
     return text.replace(SWITCH_ROOT_LINE, DEPLOY_BLOCK.lstrip("\n") + "\n" + SWITCH_ROOT_LINE)
 
 
-def build(boot_path, ko_path, out_path):
+def build(boot_path, ko_path, out_path, reference_ko=None):
     orig = open(boot_path, "rb").read()
     header, kernel, ramdisk_gz, page = boot_split(orig)
     print(f"input  {boot_path}")
@@ -277,11 +317,11 @@ def build(boot_path, ko_path, out_path):
     with open(out_path, "wb") as f:
         f.write(out)
     print(f"output {out_path} ({len(out)} bytes)")
-    verify(orig, out, ko_path)
+    verify(orig, out, ko_path, reference_ko)
     return out_path
 
 
-def verify(orig, out, ko_path):
+def verify(orig, out, ko_path, reference_ko=None):
     """Re-read the built image and prove the things that have burned this repo."""
     print("verifying:")
     o_hdr, o_kernel, o_rd, _ = boot_split(orig)
@@ -314,7 +354,20 @@ def verify(orig, out, ko_path):
     ko = open(ko_path, "rb").read()
     checks.append(("payload .ko matches source",
                    names["touch-payload-s6sy761.ko"].data == ko))
-    checks.append((".ko vermagic is 6.12.0-sm6350", b"vermagic=6.12.0-sm6350" in ko))
+    vm = ko_vermagic(ko)
+    checks.append((f".ko vermagic is exactly {EXPECT_VERMAGIC!r} (got {vm!r})",
+                   vm is not None and vm.split()[0] == EXPECT_VERMAGIC))
+    if reference_ko:
+        ref = open(reference_ko, "rb").read()
+        rvm = ko_vermagic(ref)
+        checks.append((f"reference module vermagic matches (got {rvm!r})",
+                       rvm is not None and rvm == vm))
+        # This is the exact check the kernel makes and that we previously failed.
+        sec = ".gnu.linkonce.this_module"
+        ours, theirs = elf_section_size(ko, sec), elf_section_size(ref, sec)
+        checks.append((f"struct module size matches reference "
+                       f"({ours} vs {theirs})",
+                       ours is not None and ours == theirs))
     old_entries, _, _, _ = cpio_parse(gzip.decompress(o_rd))
     checks.append(("no original file lost",
                    {e.name for e in old_entries} <= set(names)))
@@ -379,13 +432,16 @@ def main():
     ap.add_argument("--boot", help="original working hybrid boot.img")
     ap.add_argument("--ko", help="s6sy761.ko built for the hybrid kernel")
     ap.add_argument("--out", help="output boot.img")
+    ap.add_argument("--reference-ko", help="a module known to load on the target "
+                    "kernel; its vermagic and struct module size are compared "
+                    "against the payload (e.g. msm.ko from the Mobian initrd)")
     ap.add_argument("--selftest", action="store_true", help="run internal checks")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
     if not (a.boot and a.ko and a.out):
         ap.error("--boot, --ko and --out are all required")
-    build(a.boot, a.ko, a.out)
+    build(a.boot, a.ko, a.out, a.reference_ko)
 
 
 if __name__ == "__main__":
