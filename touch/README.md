@@ -89,12 +89,19 @@ The phone charges only in fastboot or powered off, so plug in early.
 
 ```bash
 # Hold Volume Up while plugging in USB -- the phone powers on into fastboot.
-fastboot devices          # expect HQ616S35A9
+fastboot devices                  # expect HQ616S35A9
+fastboot getvar current-slot      # confirm slot a before flashing boot_a
 fastboot flash boot_a build/boot-pmos-hybrid-touch.img
 fastboot reboot
 ```
 
 `fastboot boot` is **not** supported on this device; the image must be flashed.
+
+**Check which SD card is inserted first.** This image and the pmOS rollback both
+mount the rootfs by pmOS partition UUID. If the *Mobian* card is in the phone, both
+hang in the initramfs with a black screen and no network. `boot-mobian-ROLLBACK.img`
+is staged for exactly that case -- it is the only recovery that does not require
+swapping the card.
 
 ### Rollback
 
@@ -107,8 +114,9 @@ fastboot flash boot_a build/boot-pmos-hybrid-ROLLBACK.img
 
 | Image | sha256 |
 |---|---|
-| `boot-pmos-hybrid-touch.img` | `ed62abc84ccca0fbb5d9ad46d2322144f56721630f94a1f47dcb65df64a24611` |
-| `boot-pmos-hybrid-ROLLBACK.img` | `1be9dac0c9309ed10b9513bc8593b4171dd9c00c0c27df043dde4001b99efef3` |
+| `boot-pmos-hybrid-touch.img` | `a36b370378254d572fa62d0ebe0f359966471084fa8d71b104332d3da35b19ce` |
+| `boot-pmos-hybrid-ROLLBACK.img` (pmOS rootfs) | `1be9dac0c9309ed10b9513bc8593b4171dd9c00c0c27df043dde4001b99efef3` |
+| `boot-mobian-ROLLBACK.img` (Mobian rootfs) | `59a1167af6f3ce2331d7881fba06e69695480ca9749130380c04919399ebe115` |
 
 ## Verifying on the device
 
@@ -122,7 +130,8 @@ rc-service enable-touch start           # re-run by hand
 ```
 
 `pdx213 touch payload installed` in the log means the initramfs stage worked; the
-driver stage is separate.
+driver stage is separate. The two log lines are trustworthy: the install commands are
+`&&`-chained, so a partial failure logs `FAILED` rather than claiming success.
 
 ## Known limitations
 
@@ -135,6 +144,10 @@ driver stage is separate.
   under pmOS. Not built yet — no point guessing before seeing it.
 - **`systemctl restart phosh` has no pmOS equivalent worth trying.** Restarting the
   compositor crashes the I2C bus and kills touch. Always full reboot.
+- The whole in-kernel chain touch needs was confirmed built into the hybrid kernel
+  (`I2C_QCOM_GENI`, `PINCTRL_SM6350`, `INPUT_EVDEV`, `GPIO_CDEV` all `=y`), which
+  matters because the pmOS rootfs supplies no usable modules at all.
+  `TOUCHSCREEN_S6SY761` is unset there -- hence the out-of-tree module.
 - Only the pre-Phosh rootfs image could be inspected offline (the live SD card is the
   expanded, Phosh-installed version). `python3` was confirmed present there, and
   package installs only add, so the interpreter the script needs will be there.

@@ -118,6 +118,11 @@ def hold_forever(fd):
     pid = os.fork()
     if pid == 0:
         os.setsid()
+        # Drop the inherited stdio: holding OpenRC's pipes open is the classic way
+        # a service start hangs waiting for EOF on output that never closes.
+        null = os.open(os.devnull, os.O_RDWR)
+        for stdio in (0, 1, 2):
+            os.dup2(null, stdio)
         while True:
             time.sleep(3600)
     log(f"AVDD held by pid {pid}")

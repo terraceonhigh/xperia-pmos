@@ -49,19 +49,25 @@ DEPLOY_BLOCK = '''
 # The rootfs is mounted at /sysroot but we have not switched to it yet. Install the
 # touch driver + enable script + OpenRC service. Idempotent; failures are ignored.
 if [ -f /touch-payload-s6sy761.ko ]; then
-	{
-		mkdir -p /sysroot/usr/local/lib /sysroot/usr/local/bin \\
-			/sysroot/etc/init.d /sysroot/etc/runlevels/default
-		cp /touch-payload-s6sy761.ko /sysroot/usr/local/lib/s6sy761.ko
-		cp /touch-payload-enable.py /sysroot/usr/local/bin/enable-touch.py
-		cp /touch-payload-enable.initd /sysroot/etc/init.d/enable-touch
-		chmod 644 /sysroot/usr/local/lib/s6sy761.ko
-		chmod 755 /sysroot/usr/local/bin/enable-touch.py \\
-			/sysroot/etc/init.d/enable-touch
-		ln -sf /etc/init.d/enable-touch \\
+	# &&-chained on purpose: a plain { ...; } || echo group only reports the exit
+	# status of its *last* command, so a failed cp would still log success and the
+	# on-device diagnostic would lie. if/then/else also swallows failure, so a
+	# broken install still boots.
+	if mkdir -p /sysroot/usr/local/lib /sysroot/usr/local/bin \\
+			/sysroot/etc/init.d /sysroot/etc/runlevels/default \\
+		&& cp /touch-payload-s6sy761.ko /sysroot/usr/local/lib/s6sy761.ko \\
+		&& cp /touch-payload-enable.py /sysroot/usr/local/bin/enable-touch.py \\
+		&& cp /touch-payload-enable.initd /sysroot/etc/init.d/enable-touch \\
+		&& chmod 644 /sysroot/usr/local/lib/s6sy761.ko \\
+		&& chmod 755 /sysroot/usr/local/bin/enable-touch.py \\
+			/sysroot/etc/init.d/enable-touch \\
+		&& ln -sf /etc/init.d/enable-touch \\
 			/sysroot/etc/runlevels/default/enable-touch
+	then
 		echo "$LOG_PREFIX pdx213 touch payload installed" > /dev/kmsg
-	} || echo "$LOG_PREFIX pdx213 touch payload FAILED" > /dev/kmsg
+	else
+		echo "$LOG_PREFIX pdx213 touch payload FAILED" > /dev/kmsg
+	fi
 fi
 # --- end pdx213 touchscreen payload ---
 '''
