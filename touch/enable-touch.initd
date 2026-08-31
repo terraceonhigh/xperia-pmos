@@ -35,7 +35,9 @@ start() {
 		cat /proc/interrupts
 		echo "--- gpio state (needs debugfs) ---"
 		mount -t debugfs none /sys/kernel/debug 2>/dev/null
-		cat /sys/kernel/debug/gpio 2>&1 | grep -iE "f100000|gpio-2[0-9]|gpio-1[0-9]|tlmm" | head -30
+		# gpiochip1's base is 521, so the touch lines are gpio-531/542/543 -- an earlier
+		# grep for "gpio-1x/2x" matched nothing and threw the dump away.
+		cat /sys/kernel/debug/gpio 2>&1 | head -40
 		echo "--- irq domains ---"
 		cat /sys/kernel/debug/irq/domains/default 2>&1 | head -10
 		echo "--- does the DT node carry an interrupt? ---"

@@ -80,13 +80,27 @@ cat src/include/generated/utsrelease.h
 mkdir -p mod
 cp src/drivers/input/touchscreen/s6sy761.c mod/
 echo 'obj-m += s6sy761.o' > mod/Makefile
+
+# DIAG=1 adds one dev_info before the IRQ request. Probe fails there with -EINVAL on
+# a kernel and DT node identical to ones where it worked, and the two candidate
+# causes need different fixes: client->irq == 0 means the interrupt never mapped,
+# while a valid number means the trigger type was rejected. Nothing readable from
+# outside the kernel distinguishes them, so ask the driver.
+if [ "${DIAG:-0}" = "1" ]; then
+	sed -i 's|^\terr = devm_request_threaded_irq(&client->dev, client->irq, NULL,|\tdev_info(\&client->dev, "DIAG irq=%d max_x=%u max_y=%u tx=%u\\n", client->irq, max_x, max_y, sdata->tx_channel);\n\terr = devm_request_threaded_irq(\&client->dev, client->irq, NULL,|' mod/s6sy761.c
+	grep -q "DIAG irq=" mod/s6sy761.c || { echo "DIAG patch did not apply"; exit 1; }
+	echo "DIAG instrumentation applied"
+fi
 make -C src M=/work/mod KBUILD_MODPOST_WARN=1 modules
 
 cp mod/s6sy761.ko /work/s6sy761.ko
 INNER
 
 echo "=== building in $IMAGE ==="
-podman run --rm -v "$WORK:/work:z" -w /work "$IMAGE" bash /work/inner.sh
+# DIAG must be passed in explicitly: podman does not inherit the host environment,
+# and the instrumentation switch is read inside the container.
+podman run --rm -e "DIAG=${DIAG:-0}" -v "$WORK:/work:z" -w /work "$IMAGE" \
+	bash /work/inner.sh
 
 echo "=== result ==="
 ls -la "$WORK/s6sy761.ko"
