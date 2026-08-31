@@ -60,14 +60,63 @@ means poking an unrelated pin: the TLMM gpiochip is found by chip label and line
 (falling back to `gpiochip1`, which is what it enumerated as on Mobian), and the i2c
 device name is globbed from `/sys/bus/i2c/devices/*-0048`.
 
-## Building
+## The module: `build--s6sy761.ko` from the release does not load
+
+Worth knowing before you trust that file. It reports `vermagic=6.12.0-sm6350` with a
+1088-byte `struct module`; the running kernel wants `6.12-sm6350` and 1152 bytes, so
+`insmod` fails:
+
+```
+insmod: ERROR: could not insert module: Invalid module format
+module s6sy761: .gnu.linkonce.this_module section size must match
+                the kernel's built struct module size at run time
+```
+
+It was a build attempt against a different tree, and it never worked. No distro ships
+a working one either — `CONFIG_TOUCHSCREEN_S6SY761` is unset in every Mobian config,
+which is why the driver has to be built out of tree. It is also absent from the Mobian
+initrd and from `images--mobian-rootfs-raw.img`.
+
+The target ABI, measured from modules known to load on this kernel (`msm.ko`,
+`dm-mod.ko`, `rmnet.ko`, `qcom_stats.ko` out of the Mobian initrd):
+
+| Property | Required value |
+|---|---|
+| `vermagic` | `6.12-sm6350 SMP mod_unload aarch64` |
+| `.gnu.linkonce.this_module` | 1152 bytes |
+| `CONFIG_MODVERSIONS` | off — no symbol CRCs to match |
+| `CONFIG_MODULE_SIG` | off — unsigned modules load |
+
+`touch/build-module.sh` builds it. It uses **6.12.107** source even though the kernel
+is 6.12.68, which is safe here for a non-obvious reason: Debian sets `KERNELRELEASE`
+to plain `6.12-sm6350` with no point version — hence the odd `uname -r` — so both
+trees yield the same vermagic, and 6.12.107's own modules were verified to have the
+same 1152-byte `struct module`. 6.12.68 has rotated out of the archive. Building from
+the orig tarball needs `SUBLEVEL` blanked and `LOCALVERSION="-sm6350"`, or vermagic
+comes out as `6.12.107` and will not load.
+
+Run it on a Linux host with podman (macOS can't run kbuild, and Debian's prebuilt
+kbuild host tools are Linux binaries):
+
+```bash
+ssh humboldt 'bash -s' < touch/build-module.sh
+```
+
+## Building the boot image
 
 ```bash
 python3 touch/build-touch-boot.py \
     --boot build/boot-pmos-hybrid-ROLLBACK.img \
     --ko   build/s6sy761.ko \
+    --reference-ko build/reference-msm.ko \
     --out  build/boot-pmos-hybrid-touch.img
 ```
+
+Always pass `--reference-ko` — any module known to load on the target kernel. It makes
+the build compare vermagic *and* `struct module` size against that reference, which is
+the same test the kernel applies at load time, done offline. Without it a module like
+the broken release asset sails through and costs a full boot-and-pull cycle to
+discover.
 
 The input is the checkpoint image with an attested GUI
 (`checkpoints/03-pmos-hybrid-display/boot.img`). The rebuild copies the original
