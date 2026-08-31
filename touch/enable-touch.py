@@ -42,7 +42,14 @@ GPIOHANDLE_REQUEST_OUTPUT = 0x02
 
 
 def log(msg):
-    print(msg, flush=True)
+    # Uptime is stamped on every line so this log can be lined up against dmesg
+    # timestamps, which is the only way to tell our actions from the driver's.
+    try:
+        with open("/proc/uptime") as f:
+            up = float(f.read().split()[0])
+    except OSError:
+        up = 0.0
+    print(f"[{up:9.3f}] {msg}", flush=True)
 
 
 def find_tlmm_chip():
@@ -153,6 +160,29 @@ def write_sysfs(path, text):
         return False
 
 
+def reset_pulse(rst_fd, settle):
+    """Assert reset for 0.5s, release it, then let the IC boot for `settle` seconds.
+
+    The IC must reboot with AVDD already up. gpio21 has bias-pull-up in the DT, so it
+    comes out of reset by itself at pinctrl time -- long before userspace can raise
+    AVDD -- and a chip that booted without analog power reports a zeroed panel (the
+    "axis have not been set" warning) even though its firmware-integrity check passes.
+    """
+    log(f"  reset: GPIO {RESET_LINE} LOW")
+    set_line(rst_fd, 0)
+    time.sleep(0.5)
+    set_line(rst_fd, 1)
+    log(f"  reset: GPIO {RESET_LINE} HIGH, settling {settle}s")
+    time.sleep(settle)
+
+
+def probe_ok(dev):
+    """True only if the driver is bound *and* an input device exists."""
+    bound = os.path.exists(f"{DRIVER}/{dev}")
+    events = glob.glob(f"/sys/bus/i2c/devices/{dev}/input/input*/event*")
+    return bound and bool(events), bound, events
+
+
 def main():
     if os.geteuid() != 0:
         sys.exit("must run as root")
@@ -164,52 +194,60 @@ def main():
 
     chip = find_tlmm_chip()
 
-    # 1. AVDD on, and keep it on.
+    # 1. AVDD on, held for the life of the boot, and given time to settle before
+    #    anything talks to the IC.
     avdd = request_line(chip, AVDD_LINE, 1, "touch_avdd")
     if avdd is not None:
         log(f"GPIO {AVDD_LINE} HIGH (AVDD on)")
         hold_forever(avdd)
+    time.sleep(1.0)
 
-    # 2. Load the driver. The first probe frequently errors out; that is expected
-    #    and is what steps 3-5 clean up, so failure here is not fatal.
-    if not os.path.isdir(f"{DRIVER}"):
+    # 2. Take the reset line and hold it. Requested already deasserted so that
+    #    claiming it cannot itself reset the IC at an awkward moment.
+    rst = request_line(chip, RESET_LINE, 1, "touch_rst")
+    if rst is None:
+        sys.exit(f"ERROR: could not take GPIO {RESET_LINE} for reset")
+
+    # 3. Reboot the IC now that AVDD is present, *before* the driver ever probes.
+    #    This is the ordering the Mobian procedure could not use: there the module
+    #    auto-loaded ~100s into boot, so the reset could only ever come afterwards.
+    log("resetting IC before first probe (AVDD is up)")
+    reset_pulse(rst, settle=5)
+
+    # 4. Now load the driver, so its first probe sees a properly booted IC.
+    if not os.path.isdir(DRIVER):
         log(f"insmod {MODULE}")
         if os.system(f"insmod {MODULE} 2>&1") != 0:
             log("  insmod returned non-zero (may already be loaded)")
     else:
         log("driver already registered")
+    time.sleep(1.0)
 
-    # 3. Drop the bad probe.
-    log("unbinding for a clean re-probe")
-    write_sysfs(f"{DRIVER}/unbind", dev)
-    time.sleep(0.5)
-
-    # 4. Hard-reset the IC.
-    log(f"resetting touch IC (GPIO {RESET_LINE})")
-    rst = request_line(chip, RESET_LINE, 0, "touch_rst")
-    if rst is None:
-        sys.exit(f"ERROR: could not take GPIO {RESET_LINE} for reset")
-    time.sleep(0.5)
-    set_line(rst, 1)
-    os.close(rst)
-    time.sleep(2)
-    log("IC ready")
-
-    # 5. Rebind, retrying: the IC is sometimes still settling.
-    for attempt in range(1, 4):
-        if write_sysfs(f"{DRIVER}/bind", dev):
-            break
-        log(f"  bind retry {attempt}")
-        time.sleep(1)
-    time.sleep(0.5)
-
-    # Verify the driver actually bound and produced an input device.
-    bound = os.path.exists(f"{DRIVER}/{dev}")
-    events = glob.glob(f"/sys/bus/i2c/devices/{dev}/input/input*/event*")
-    if bound and events:
-        log(f"OK: touch enabled ({os.path.basename(events[0])})")
+    ok, bound, events = probe_ok(dev)
+    if ok:
+        log(f"OK: touch enabled on first probe ({os.path.basename(events[0])})")
+        hold_forever(rst)
         return 0
-    log(f"ERROR: bound={bound} events={events}")
+    log(f"first probe did not bind (bound={bound}); retrying with longer settles")
+
+    # 5. Retry the whole power-cycle-and-rebind dance, giving the IC more time each
+    #    round. Escalating rather than fixed because the settle needed is unknown --
+    #    2s was demonstrably too short.
+    for settle in (5, 8, 12):
+        write_sysfs(f"{DRIVER}/unbind", dev)      # no-op if it never bound
+        time.sleep(0.5)
+        reset_pulse(rst, settle)
+        write_sysfs(f"{DRIVER}/bind", dev)
+        time.sleep(1.0)
+        ok, bound, events = probe_ok(dev)
+        log(f"  after {settle}s settle: bound={bound} events={events}")
+        if ok:
+            log(f"OK: touch enabled ({os.path.basename(events[0])})")
+            hold_forever(rst)
+            return 0
+
+    hold_forever(rst)
+    log(f"ERROR: touch not enabled (bound={bound} events={events})")
     return 1
 
 

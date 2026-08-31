@@ -25,6 +25,21 @@ start() {
 		dmesg | grep -iE "i2c|geni" | tail -20
 		echo "--- input devices ---"
 		cat /proc/bus/input/devices
+
+		# The driver's probe died in devm_request_threaded_irq with -EINVAL, on a
+		# kernel and DT node byte-identical to ones where it worked -- so the cause
+		# is runtime state, and these three dumps are what distinguish the
+		# possibilities: whether the touch interrupt got a virq at all, whether
+		# gpio22 is claimed by something, and what direction/value the lines hold.
+		echo "--- /proc/interrupts ---"
+		cat /proc/interrupts
+		echo "--- gpio state (needs debugfs) ---"
+		mount -t debugfs none /sys/kernel/debug 2>/dev/null
+		cat /sys/kernel/debug/gpio 2>&1 | grep -iE "f100000|gpio-2[0-9]|gpio-1[0-9]|tlmm" | head -30
+		echo "--- irq domains ---"
+		cat /sys/kernel/debug/irq/domains/default 2>&1 | head -10
+		echo "--- does the DT node carry an interrupt? ---"
+		od -An -tx1 /sys/firmware/devicetree/base/soc@0/geniqup@9c0000/i2c@988000/touchscreen@48/interrupts 2>&1 | head -2
 	} >> /var/log/enable-touch.log 2>&1
 	# This log is the only channel out of the device, and reading it means force
 	# powering the phone off and pulling the card. Commit it now rather than
