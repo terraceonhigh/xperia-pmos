@@ -45,37 +45,44 @@ apt-get install -y -qq --no-install-recommends \
 	gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu >/dev/null
 
 cd /work
-rm -rf src && mkdir src
-tar xf linux-6.12-sm6350_*.orig.tar.gz -C src --strip-components=1
-dpkg-deb -x linux-image.deb debx
-cp debx/boot/config-6.12-sm6350 src/.config
-
-cd src
-# Blank SUBLEVEL so KERNELVERSION is "6.12" rather than "6.12.107"; with
-# LOCALVERSION="-sm6350" that yields the release string the running kernel wants.
-sed -i 's/^SUBLEVEL = .*/SUBLEVEL =/' Makefile
-./scripts/config --file .config \
-	--set-str LOCALVERSION "-sm6350" \
-	--disable LOCALVERSION_AUTO \
-	--module TOUCHSCREEN_S6SY761
-
 export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-make -s olddefconfig
-grep -E '^CONFIG_(TOUCHSCREEN_S6SY761|LOCALVERSION)=' .config
 
-make -j"$(nproc)" modules_prepare
+# Resumable: preparing the tree takes minutes, so only do it once.
+if [ ! -f src/.prepared ]; then
+	rm -rf src && mkdir src
+	tar xf linux-6.12-sm6350_*.orig.tar.gz -C src --strip-components=1
+	dpkg-deb -x linux-image.deb debx
+	cp debx/boot/config-6.12-sm6350 src/.config
 
-echo "--- release string check (must be 6.12-sm6350) ---"
-cat include/config/kernel.release
-cat include/generated/utsrelease.h
-
-# Single-target module build; fall back to a full modules build if unsupported.
-if ! make -j"$(nproc)" drivers/input/touchscreen/s6sy761.ko; then
-	echo "single-target build failed, building all modules"
-	make -j"$(nproc)" modules
+	cd src
+	# Blank SUBLEVEL so KERNELVERSION is "6.12" rather than "6.12.107"; with
+	# LOCALVERSION="-sm6350" that yields the release the running kernel wants.
+	sed -i 's/^SUBLEVEL = .*/SUBLEVEL =/' Makefile
+	./scripts/config --file .config \
+		--set-str LOCALVERSION "-sm6350" \
+		--disable LOCALVERSION_AUTO \
+		--module TOUCHSCREEN_S6SY761
+	make -s olddefconfig
+	make -j"$(nproc)" modules_prepare
+	touch .prepared
+	cd /work
 fi
 
-cp drivers/input/touchscreen/s6sy761.ko /work/s6sy761.ko
+echo "--- release string check (must be 6.12-sm6350) ---"
+cat src/include/config/kernel.release
+cat src/include/generated/utsrelease.h
+
+# Build the driver as an *external* module: one source file, one modpost run, instead
+# of compiling every module in the tree. KBUILD_MODPOST_WARN is required because
+# there is no vmlinux here, so modpost cannot resolve symbols and would otherwise
+# fail; the symbols it cannot see (i2c, input, regulator) are all built into the
+# running kernel, which is verified separately from its config.
+mkdir -p mod
+cp src/drivers/input/touchscreen/s6sy761.c mod/
+echo 'obj-m += s6sy761.o' > mod/Makefile
+make -C src M=/work/mod KBUILD_MODPOST_WARN=1 modules
+
+cp mod/s6sy761.ko /work/s6sy761.ko
 INNER
 
 echo "=== building in $IMAGE ==="
