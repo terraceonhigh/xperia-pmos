@@ -81,6 +81,34 @@ fi
 # --- end pdx213 touchscreen payload ---
 '''
 
+# Installs a public key for root and for `user` (uid 10000 in this rootfs) so
+# logging in needs no password: the rootfs ships no key file, and its password
+# was set during someone else's pmbootstrap run. Same guarded, failure-tolerant
+# shape as the touch block -- a failure here must never stop the phone booting.
+AUTHKEY_BLOCK = '''
+# --- pdx213 authorized key (injected by touch/build-touch-boot.py) ---
+if [ -f /touch-payload-authkey ]; then
+	if mkdir -p /sysroot/root/.ssh /sysroot/home/user/.ssh \\
+		&& cp /touch-payload-authkey /sysroot/root/.ssh/authorized_keys \\
+		&& cp /touch-payload-authkey /sysroot/home/user/.ssh/authorized_keys \\
+		&& chmod 700 /sysroot/root/.ssh /sysroot/home/user/.ssh \\
+		&& chmod 600 /sysroot/root/.ssh/authorized_keys \\
+			/sysroot/home/user/.ssh/authorized_keys \\
+		&& chown -R 10000:10000 /sysroot/home/user/.ssh
+	then
+		echo "$LOG_PREFIX pdx213 authorized key installed" > /dev/kmsg
+		mkdir -p /sysroot/var/log
+		echo "authorized key installed" > /sysroot/var/log/authkey.status
+		sync
+	else
+		echo "$LOG_PREFIX pdx213 authorized key FAILED" > /dev/kmsg
+		mkdir -p /sysroot/var/log 2>/dev/null
+		echo "authorized key FAILED" > /sysroot/var/log/authkey.status 2>/dev/null
+	fi
+fi
+# --- end pdx213 authorized key ---
+'''
+
 SWITCH_ROOT_LINE = 'exec switch_root /sysroot "$init"'
 MARKER = "pdx213 touchscreen payload"
 
@@ -258,18 +286,22 @@ def boot_cmdline(img):
 
 # ------------------------------------------------------------------- build
 
-def patch_init(text):
-    """Insert the deploy block just before init_2nd.sh hands off to the real root."""
+def patch_init(text, blocks=None):
+    """Insert the deploy blocks just before init_2nd.sh hands off to the real root."""
     if MARKER in text:
         raise ValueError("init_2nd.sh already carries a touch payload block")
     if text.count(SWITCH_ROOT_LINE) != 1:
         raise ValueError(
             f"expected exactly one {SWITCH_ROOT_LINE!r}, "
             f"found {text.count(SWITCH_ROOT_LINE)}")
-    return text.replace(SWITCH_ROOT_LINE, DEPLOY_BLOCK.lstrip("\n") + "\n" + SWITCH_ROOT_LINE)
+    if blocks is None:
+        blocks = [DEPLOY_BLOCK]
+    injected = "".join(b.lstrip("\n") + "\n" for b in blocks)
+    return text.replace(SWITCH_ROOT_LINE, injected + SWITCH_ROOT_LINE)
 
 
-def build(boot_path, ko_path, out_path, reference_ko=None):
+def build(boot_path, ko_path, out_path, reference_ko=None,
+          authorized_key=None):
     orig = open(boot_path, "rb").read()
     header, kernel, ramdisk_gz, page = boot_split(orig)
     print(f"input  {boot_path}")
@@ -292,14 +324,24 @@ def build(boot_path, ko_path, out_path, reference_ko=None):
     init = by_name.get("init_2nd.sh")
     if init is None:
         raise ValueError("initramfs has no init_2nd.sh")
-    init.data = patch_init(init.data.decode()).encode()
-    print("  patched init_2nd.sh")
+    blocks = [DEPLOY_BLOCK] + ([AUTHKEY_BLOCK] if authorized_key else [])
+    init.data = patch_init(init.data.decode(), blocks).encode()
+    print(f"  patched init_2nd.sh ({len(blocks)} block(s))")
 
     # Give the injected files inode numbers above everything already present.
     next_ino = max(e.hdr["ino"] for e in entries) + 1
     template = init.hdr
-    for i, (name, (mode, src)) in enumerate(sorted(PAYLOAD.items())):
-        blob = open(ko_path if src is None else os.path.join(HERE, src), "rb").read()
+    payload = dict(PAYLOAD)
+    if authorized_key:
+        payload["touch-payload-authkey"] = (0o100644, authorized_key)
+    for i, (name, (mode, src)) in enumerate(sorted(payload.items())):
+        if src is None:
+            path = ko_path
+        elif os.path.isabs(src):
+            path = src                  # absolute: passed in, e.g. the pubkey
+        else:
+            path = os.path.join(HERE, src)
+        blob = open(path, "rb").read()
         hdr = dict(template)
         hdr.update(ino=next_ino + i, mode=mode, uid=0, gid=0, nlink=1,
                    filesize=len(blob), namesize=len(name) + 1, check=0)
@@ -317,11 +359,11 @@ def build(boot_path, ko_path, out_path, reference_ko=None):
     with open(out_path, "wb") as f:
         f.write(out)
     print(f"output {out_path} ({len(out)} bytes)")
-    verify(orig, out, ko_path, reference_ko)
+    verify(orig, out, ko_path, reference_ko, authorized_key)
     return out_path
 
 
-def verify(orig, out, ko_path, reference_ko=None):
+def verify(orig, out, ko_path, reference_ko=None, authorized_key=None):
     """Re-read the built image and prove the things that have burned this repo."""
     print("verifying:")
     o_hdr, o_kernel, o_rd, _ = boot_split(orig)
@@ -368,6 +410,14 @@ def verify(orig, out, ko_path, reference_ko=None):
         checks.append((f"struct module size matches reference "
                        f"({ours} vs {theirs})",
                        ours is not None and ours == theirs))
+    if authorized_key:
+        want = open(authorized_key, "rb").read()
+        checks.append(("authorized key payload matches source",
+                       "touch-payload-authkey" in names
+                       and names["touch-payload-authkey"].data == want))
+        checks.append(("authkey deploy block injected",
+                       "pdx213 authorized key" in
+                       names["init_2nd.sh"].data.decode()))
     old_entries, _, _, _ = cpio_parse(gzip.decompress(o_rd))
     checks.append(("no original file lost",
                    {e.name for e in old_entries} <= set(names)))
@@ -435,13 +485,16 @@ def main():
     ap.add_argument("--reference-ko", help="a module known to load on the target "
                     "kernel; its vermagic and struct module size are compared "
                     "against the payload (e.g. msm.ko from the Mobian initrd)")
+    ap.add_argument("--authorized-key", help="public key file to install for "
+                    "root and user (uid 10000) in the rootfs")
     ap.add_argument("--selftest", action="store_true", help="run internal checks")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
     if not (a.boot and a.ko and a.out):
         ap.error("--boot, --ko and --out are all required")
-    build(a.boot, a.ko, a.out, a.reference_ko)
+    build(a.boot, a.ko, a.out, a.reference_ko,
+          os.path.abspath(a.authorized_key) if a.authorized_key else None)
 
 
 if __name__ == "__main__":
