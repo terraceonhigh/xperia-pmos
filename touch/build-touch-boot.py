@@ -70,6 +70,7 @@ if [ -f /touch-payload-s6sy761.ko ]; then
 		mkdir -p /sysroot/var/log
 		echo "payload installed by initramfs" \\
 			> /sysroot/var/log/touch-payload.status
+		sync
 	else
 		echo "$LOG_PREFIX pdx213 touch payload FAILED" > /dev/kmsg
 		mkdir -p /sysroot/var/log 2>/dev/null

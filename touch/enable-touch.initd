@@ -26,5 +26,9 @@ start() {
 		echo "--- input devices ---"
 		cat /proc/bus/input/devices
 	} >> /var/log/enable-touch.log 2>&1
+	# This log is the only channel out of the device, and reading it means force
+	# powering the phone off and pulling the card. Commit it now rather than
+	# trusting the writeback interval to beat the power cut.
+	sync
 	eend $rc
 }
