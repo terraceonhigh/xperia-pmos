@@ -1,88 +1,112 @@
-# Next: build `linux-sony` instead of maintaining the hybrid boot
+# Next: reuse the packaged sm6350 kernel instead of building one
 
-Written 2026-08-31, after touch was confirmed working on the hybrid boot. The short
-version: the hybrid boot is a workaround for a panel problem that the SoMainline
-kernel appears to solve outright, and switching to it would obsolete most of this
-repo's cleverness while also delivering several things on the wish list.
+Written 2026-08-31, rewritten 2026-09-08 after finding that almost everything this
+plan set out to build already ships in postmarketOS's package tree today. The short
+version got shorter: don't build a kernel — flip one config flag on an existing one.
 
-## What was found
+## What changed since the first draft
 
-[pmaports!9445](https://gitlab.postmarketos.org/postmarketOS/pmaports/-/merge_requests/9445)
-— *"Draft: Add 10 Sony devices based on a single shared -next kernel"*, by Marijn
-Suijten of SoMainline — adds `device-sony-pdx213` against a new kernel package,
-`linux-sony`. Its stated targets per device are: boots to console, available on USB,
-working display, working touch, working GPU.
+The original plan (below, kept for the boot-format warning) was to clone
+`SoMainline/linux` at a Draft MR's pinned commit and cross-compile it in a container.
+That's no longer the right target. Two things found on 2026-09-08:
 
-Kernel package (`device/testing/linux-sony/APKBUILD` on branch `sony` of
-`Marijn/pmaports`):
+1. The [wiki page](https://wiki.postmarketos.org/wiki/Sony_Xperia_10_III_(sony-pdx213))
+   names a second, more active fork: **`sm6350-mainline/linux`** — last pushed
+   2026-09-01, versioned branches through `sm6350-7.2.y`. Its `sm6350-sony-xperia-lena-pdx213.dts`
+   already wires up touch (`s6sy761` on `988000.i2c`, same bus we fought with), the real
+   panel (`samsung,sofef01-m-ams597ut04` under `DRM_MSM`/`mdss_dsi0`), the PM7250B
+   charger + fuel gauge + ADC (`status = "okay"`, monitored-battery, thermistor table),
+   and Bluetooth (`qcom,wcn3991-bt` on UART1). All on the same I²C bus and same GPIOs
+   documented in `touch/README.md` — this is upstream of the point where our March
+   PM7250B DTS work regressed touch, and it does *not* regress there.
 
-| Field | Value |
-|---|---|
-| Source | `github.com/SoMainline/linux`, branch `marijn/panel-exclusives` |
-| Commit | `36782eccb531b0a20150ebb7c742eaca27c2556b` |
-| Version | 6.14 |
-| Toolchain | clang/LLVM (`LLVM=1`) |
-| Config | `config-sony.aarch64`, based on `arch/arm64/configs/defconfig` |
-| Modules | `modules_install` is commented out — everything built in |
+2. **`sm6350-mainline/linux` is not just "prior art to read" — it's already the exact
+   source of a package sitting in `pmaports/device/community/`:**
+   `linux-postmarketos-qcom-sm6350`, currently `pkgver=7.2.0`, built from tag
+   `v7.2.0-sm6350` of that same repo. It's the kernel Fairphone 4's device package
+   (`device-fairphone-fp4`) already depends on and pmOS already builds. `dtbs_install`
+   in its `package()` installs every DTB the source tree produces — including
+   `sm6350-sony-xperia-lena-pdx213.dtb` — with zero pdx213-specific packaging.
 
-`config-sony.aarch64` enables, all `=y`:
+Checked `config-postmarketos-qcom-sm6350.aarch64` (the config this package actually
+ships) against what pdx213 needs:
 
-- `TOUCHSCREEN_S6SY761` — touch in the kernel. No out-of-tree module, so none of the
-  point-release ABI trouble documented in `touch/README.md` applies.
-- `DRM_MSM` and `DRM_PANEL_SAMSUNG_SOFEF01` — the pdx213's actual panel, which
-  `DEVICE_STATUS.md` in the sibling repo records as "not in upstream kernel". Real DRM;
-  no simpledrm in this config at all.
-- `CHARGER_QCOM_SMB2`, `BATTERY_QCOM_BATTMGR` — battery and charging, the top item on
-  the old TODO, which correctly said it needed a kernel rebuild.
-- `USB_CONFIGFS_ECM` — so this laptop can do USB networking directly, with no jump
-  host and no `touch/apk-proxy.py`.
-- `ATH10K_SNOC`, `QCOM_Q6V5_{ADSP,MSS,PAS,WCSS}` — WiFi and the remoteprocs.
-- `SCSI_UFS_QCOM` — configured, but the wiki still lists internal storage as Broken,
-  so assume the rootfs stays on the microSD until proven otherwise.
-
-## Resolve this first — it contradicts our findings
-
-Their `deviceinfo` and ours disagree about the boot image format, and getting it wrong
-is a bootloop:
-
-| | This repo (works) | pmaports!9445 |
+| Config | State | Needed for |
 |---|---|---|
-| Kernel | raw `Image` + appended DTB | `Image.gz` (gzipped) |
-| `flash_offset_base` | `0x10000000` | `0x00000000` |
-| ramdisk offset | `0x01000000` | `0x02000000` |
-| tags offset | `0x00000100` | `0x01e00000` |
-| header version | 0 (explicit) | unset |
+| `CONFIG_DRM_MSM` / `_MDSS` / `_DPU` / `_DSI` | `=y` | real panel, not simpledrm |
+| `CONFIG_DRM_PANEL_SAMSUNG_SOFEF01` | `=m` | the pdx213 panel specifically |
+| `CONFIG_CHARGER_QCOM_SMB2` | `=y` | battery — the thing we could never build |
+| `CONFIG_SCSI_UFS_QCOM` | `=y` | internal storage controller |
+| `CONFIG_ATH10K_SNOC` | `=m` | WiFi |
+| `CONFIG_BT_HCIUART_QCA` | `=y` | Bluetooth |
+| `CONFIG_TOUCHSCREEN_S6SY761` | **not set** | touch — the one thing missing |
+| `CONFIG_USB_CONFIGFS_ECM` | not set | Mac USB networking, convenience only |
 
-Our README says gzip causes a `"devices is corrupt"` bootloop and that base must be
-`0x10000000`; theirs ships gzip at base `0x00000000`. Both cannot be right for the
-same bootloader, so one of them is conditional on something else — most likely how the
-image is assembled, or a difference between the ABL's handling of `Image.gz` versus a
-raw kernel with an appended DTB. Settle this on paper before flashing: extract the
-header from an image built by their tooling and compare it against
-`build/boot-pmos-hybrid-touch.img`, which is known to boot.
+Everything this repo spent two hardware cycles chasing an out-of-tree module for is
+one kconfig line away from being in-tree, in a kernel pmOS already builds.
 
-## Suggested order
+## The one real gap: UFS is not wired for pdx213
 
-1. Clone `SoMainline/linux` at that commit and build it with the MR's config, on
-   humboldt in a container (clang, `LLVM=1`, aarch64). `touch/build-module.sh` already
-   has a working container pattern to copy.
-2. Resolve the boot format question above, then build a boot image.
-3. Keep the current SD card intact. `build/rootfs-pmos-raw.img` plus the initramfs
-   payload mechanism can rebuild a card from scratch, but the card as it stands now has
-   a working Phosh install and 27 GB free — worth preserving.
-4. Flash and see whether the panel comes up under real DRM. If it does, most of this
-   repo becomes history: no hybrid kernel, no `msm.ko` avoidance, no out-of-tree touch
-   module, no GPIO dance.
-5. If the panel works, retest the things the hybrid boot could not do: GPU
-   acceleration, battery reporting, WiFi, and whether the Phosh *session* still fails
-   (see `touch/README.md` — it fails today and always has, and llvmpipe on simpledrm
-   was the obvious suspect, which this kernel removes).
+`CONFIG_SCSI_UFS_QCOM=y` is compiled in, and the shared `sm6350.dtsi` has the UFS
+host controller and PHY nodes — but `sm6350-sony-xperia-lena-pdx213.dts` never
+references `&ufs_mem_hc` or `&ufs_mem_phy` to turn them on or wire regulator
+supplies. The wiki's "Internal storage: Broken" and "blocks modem and wifi" notes are
+about this specific gap, not the kernel config.
 
-## Constraint
+We may not need to close it to get WiFi and modem, though:
+[xperia-mobian/DEVICE_STATUS.md](../xperia-mobian/DEVICE_STATUS.md) already has both
+working on this exact hardware, via `patch-wifi.py` and `patch-remoteproc.py`,
+without touching UFS at all — that route pulls firmware straight from the rootfs
+instead of reading calibration data off a UFS partition at runtime. Worth trying
+that route again here before spending a session bisecting UFS regulator wiring from
+scratch.
+
+## Leaner suggested order
+
+1. On the Bazzite pmbootstrap host, bump `pkgrel` and flip
+   `CONFIG_TOUCHSCREEN_S6SY761` to `m` (or `y`) in
+   `device/community/linux-postmarketos-qcom-sm6350/config-postmarketos-qcom-sm6350.aarch64`,
+   rebuild the kernel package. No container, no manual cross-compile — this is a normal
+   `pmbootstrap build`.
+2. Build `device-sony-pdx213` and `firmware-sony-pdx213` as new packages, using
+   `device-fairphone-fp4` / `firmware-fairphone-fp4` as the template (same kernel
+   dependency, same SoC family) — this was already the intended reference per
+   `xperia-mobian/CLAUDE.md`. Firmware paths pdx213.dts expects:
+   `qcom/sm6350/sony/pdx213/{adsp,cdsp,modem,ipa_fws,a615_zap}.mbn` and BT's
+   `crnv32u.bin` — all of which we already extracted and have sitting in
+   `xperia-mobian`'s rootfs from the Mobian work.
+3. **Resolve the boot format before flashing anything** — this did not go away:
+
+   | | This repo (works, hybrid boot) | Fairphone 4's real deviceinfo | pmaports!9445 (Sony devices, Draft) |
+   |---|---|---|---|
+   | `flash_offset_base` | `0x10000000` | `0x00000000` | `0x00000000` |
+   | kernel offset | (n/a, concatenated) | `0x00008000` | (unset in MR) |
+   | ramdisk offset | `0x01000000` | `0x01000000` | `0x02000000` |
+   | tags offset | `0x00000100` | `0x00000100` | `0x01e00000` |
+
+   FP4 and the Sony MR agree with each other and disagree with us on base address.
+   That's two independent data points against our one — raises the odds the
+   `0x10000000` requirement is an artifact of *our own* boot-image assembly
+   (`build-touch-boot.py`/Sony ABL header reuse), not a hard Sony ABL constraint. Still:
+   verify by extracting the header from a `pmbootstrap export`-built image and diffing
+   against `build/boot-pmos-hybrid-touch.img` (known-good) before the first flash, per
+   the original plan.
+4. Keep the SD card as-is. It has a working Phosh install and 27 GB free; nothing here
+   requires touching it until a new boot image is ready to test.
+5. Once flashed: confirm what actually broke or worked that the hybrid boot couldn't
+   test — GPU acceleration, battery reporting through the packaged `CHARGER_QCOM_SMB2`
+   driver, Bluetooth, and whether the Phosh *session* failure (pre-existing, see
+   `touch/README.md`) was specific to simpledrm/llvmpipe, which this kernel removes
+   entirely.
+
+## Constraint (unchanged, more relevant now)
 
 postmarketOS [forbids contributions created wholly or partly by generative AI
 tools](https://docs.postmarketos.org/policies-and-processes/development/ai-policy.html).
-A previous wiki edit from this work was reverted on those grounds. Reading their work
-and building it for personal use is fine; submitting anything derived from this repo to
-pmOS — wiki, pmaports, or issues — is not. Anything intended for upstream has to be
-written and understood independently of this material.
+A previous wiki edit from this work was reverted on those grounds. Reading and
+building against `sm6350-mainline/linux` and the existing pmaports packages for
+personal use is fine — it's normal open-source consumption, not a pmOS contribution.
+But this plan is now one config flag and a device package away from something that
+*looks like* a pmaports submission. If any of `device-sony-pdx213`,
+`firmware-sony-pdx213`, or the kconfig change is ever meant to go upstream, it has to
+be rewritten and understood independently of this material — not copied from here.
