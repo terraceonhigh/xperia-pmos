@@ -1,8 +1,14 @@
-# Firmware for Sony Xperia 10 III (pdx213)
-# Source: Sony Open Devices SW_binaries + stock firmware extraction
-# See: https://developer.sony.com/open-source/aosp-on-xperia-open-devices
+# Firmware for the Sony Xperia 10 III (pdx213, SM6350).
+#
+# NOT REDISTRIBUTABLE. The blobs are extracted locally from Sony's own
+# releases and are not fetched over the network:
+#   SW_binaries_for_Xperia_Android_13_4.19_v1b_lena.zip  (Sony Open Devices)
+#   XQ-BT52_EE UK_62.1.A.0.675.zip                       (stock firmware)
+# The source tarball below is built by hand from that extraction and lives
+# beside this APKBUILD; it is deliberately not committed and not uploaded.
+maintainer="terrace <terraceonhigh@gmail.com>"
 pkgname=firmware-sony-pdx213
-pkgver=20260318
+pkgver=20260908
 pkgrel=0
 pkgdesc="Firmware for Sony Xperia 10 III"
 subpackages="
@@ -10,27 +16,20 @@ subpackages="
 	$pkgname-adsp
 	$pkgname-bluetooth
 	$pkgname-cdsp
-	$pkgname-hexagonfs
 	$pkgname-ipa
 	$pkgname-modem
 	$pkgname-venus
 	$pkgname-wlan
-"
-url="https://github.com/terraceonhigh/xperia-pmos"
+	"
+url="https://developer.sony.com/open-source/aosp-on-xperia-open-devices"
 arch="aarch64"
 license="proprietary"
 makedepends="pil-squasher"
 options="!check !strip !archcheck !tracedeps textrels pmb:cross-native"
-# TODO: Host firmware blobs on GitHub and set _commit + source URL
-# For now, firmware must be manually placed in $builddir
-# See README.md for extraction instructions
-_commit=""
-source=""
-builddir="$srcdir"
+source="firmware-sony-pdx213-$pkgver.tar.gz"
 
 build() {
 	for i in *.mdt; do
-		[ -e "$i" ] || continue
 		pil-squasher "$(basename "$i" .mdt)".mbn "$i"
 	done
 }
@@ -43,89 +42,80 @@ package() {
 adreno() {
 	pkgdesc="Sony Xperia 10 III adreno firmware"
 
+	# Adreno 619. a619_gmu.bin has no device-specific path; the zap shader
+	# is named by sm6350-sony-xperia-lena-pdx213.dts via &gpu_zap_shader.
 	install -Dm644 "$builddir"/a619_gmu.bin -t \
-		"$subpkgdir/lib/firmware/qcom/"
+		"$subpkgdir/usr/lib/firmware/qcom/"
 	install -Dm644 "$builddir"/a615_zap.mbn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
 }
 
 adsp() {
 	pkgdesc="Sony Xperia 10 III adsp firmware"
 
 	install -Dm644 "$builddir"/adsp.mbn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
-	install -Dm644 "$builddir"/adspr.jsn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
-	install -Dm644 "$builddir"/adsps.jsn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
-	install -Dm644 "$builddir"/adspua.jsn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
+	install -Dm644 "$builddir"/adsp*.jsn -t \
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
 }
 
 bluetooth() {
 	pkgdesc="Sony Xperia 10 III bluetooth firmware"
 
-	# WCN3991 BT firmware
+	# WCN3991. The DTS sets firmware-name = "crnv32u.bin"; hci_qca prefixes
+	# "qca/", so both files belong in /usr/lib/firmware/qca/.
 	install -Dm644 "$builddir"/crbtfw32.tlv -t \
-		"$subpkgdir/lib/firmware/qca/"
+		"$subpkgdir/usr/lib/firmware/qca/"
 	install -Dm644 "$builddir"/crnv32u.bin -t \
-		"$subpkgdir/lib/firmware/qca/"
+		"$subpkgdir/usr/lib/firmware/qca/"
 }
 
 cdsp() {
 	pkgdesc="Sony Xperia 10 III cdsp firmware"
 
 	install -Dm644 "$builddir"/cdsp.mbn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
-	install -Dm644 "$builddir"/cdspr.jsn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
-}
-
-hexagonfs() {
-	pkgdesc="Sony Xperia 10 III hexagonfs files"
-
-	mkdir -p "$subpkgdir"/usr/share/qcom/sm6350/Sony/
-	cp -r "$builddir"/hexagonfs/ \
-		"$subpkgdir"/usr/share/qcom/sm6350/Sony/pdx213
-
-	find "$subpkgdir/usr/share/qcom/sm6350/Sony/pdx213/" \
-		-type f -exec chmod 0644 {} \;
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
+	install -Dm644 "$builddir"/cdsp*.jsn -t \
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
 }
 
 ipa() {
 	pkgdesc="Sony Xperia 10 III ipa firmware"
 
 	install -Dm644 "$builddir"/lagoon_ipa_fws.mbn \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/ipa_fws.mbn"
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/ipa_fws.mbn"
 }
 
 modem() {
 	pkgdesc="Sony Xperia 10 III modem firmware"
 
 	install -Dm644 "$builddir"/modem.mbn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
-	install -Dm644 "$builddir"/modemr.jsn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
-	install -Dm644 "$builddir"/modemuw.jsn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
+	install -Dm644 "$builddir"/modem*.jsn -t \
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
+
+	cp -r "$builddir"/modem_pr/ \
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
+	find "$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/" \
+		-type f -exec chmod 0644 {} \;
 }
 
 venus() {
 	pkgdesc="Sony Xperia 10 III venus firmware"
 
+	# Shipped for completeness; sm6350-sony-xperia-lena-pdx213.dts does not
+	# yet enable a venus node, so nothing loads this today.
 	install -Dm644 "$builddir"/venus.mbn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
 }
 
 wlan() {
 	pkgdesc="Sony Xperia 10 III wlan firmware"
 
 	install -Dm644 "$builddir"/wlanmdsp.mbn -t \
-		"$subpkgdir/lib/firmware/qcom/sm6350/Sony/pdx213/"
-	# ath10k board data (from linux-firmware-ath10k, but device-specific
-	# board.bin may be needed)
+		"$subpkgdir/usr/lib/firmware/qcom/sm6350/sony/pdx213/"
 }
 
 sha512sums="
-(run 'pmbootstrap checksum firmware-sony-pdx213' to generate)
+34a4f9e0d61ce6c841762449365ee4e9b163f7eac4e1865ef52da9ad9a50c13aedcadafafb35795fd4c550c801f6a7c00b82b3476bec19f35f91bbbbe6f519f8  firmware-sony-pdx213-20260908.tar.gz
 "

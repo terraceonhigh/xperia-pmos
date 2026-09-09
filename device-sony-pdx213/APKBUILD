@@ -1,9 +1,9 @@
 # Reference: <https://postmarketos.org/devicepkg>
-# Maintainer: terraceonhigh <terraceonhigh@github.com>
+maintainer="terrace <terraceonhigh@gmail.com>"
 pkgname=device-sony-pdx213
 pkgdesc="Sony Xperia 10 III"
 pkgver=1
-pkgrel=0
+pkgrel=4
 url="https://postmarketos.org"
 license="MIT"
 arch="aarch64"
@@ -13,34 +13,22 @@ depends="
 	firmware-sony-pdx213-adsp
 	firmware-sony-pdx213-bluetooth
 	firmware-sony-pdx213-cdsp
-	firmware-sony-pdx213-hexagonfs
 	firmware-sony-pdx213-ipa
 	firmware-sony-pdx213-modem
-	firmware-sony-pdx213-venus
 	firmware-sony-pdx213-wlan
-	firmware-qcom-adreno-a630
-	hexagonrpcd
-	hexagonrpcd-openrc
+	firmware-qcom-adreno-a630-sqe
 	linux-firmware-ath10k
 	linux-postmarketos-qcom-sm6350
-	mesa-vulkan-freedreno
 	mkbootimg
-	msm-modem
-	msm-modem-uim-selection
-	pd-mapper
-	pd-mapper-openrc
 	postmarketos-base
-	qbootctl
-	qbootctl-openrc
-	swclock-offset
-	tqftpserv
-	tqftpserv-openrc
+	soc-qcom
+	soc-qcom-modem
+	soc-qcom-qbootctl
 "
 makedepends="devicepkg-dev"
-install="$pkgname.post-install"
 source="
 	deviceinfo
-	hexagonrpcd.confd
+	kernel-cmdline.conf
 	modules-initfs
 "
 
@@ -49,12 +37,13 @@ build() {
 }
 
 package() {
+	# devicepkg_package installs kernel-cmdline.conf itself, as
+	# /usr/lib/kernel-cmdline.d/50-$pkgname.conf.
 	devicepkg_package $startdir $pkgname
-
-	install -Dm644 "$srcdir"/hexagonrpcd.confd \
-		"$pkgdir"/etc/conf.d/hexagonrpcd-adsp-sensorspd
 }
 
 sha512sums="
-(run 'pmbootstrap checksum device-sony-pdx213' to generate)
+063aa4d88518844cd8c656590ab8e46b6eb13218b4ac2fe11fc0edfbbea650058e821b70aff47f9908f6ce5f291ba4c0362427c94acfe1ab108cb3e45634e064  deviceinfo
+ed42cb93807e72a313dafc0e463bfc74b6aa1f4b186e763bce9a5742d7f5ac4c8b4cc3be0cdeb14ce0ec60d1216fae83dcb941230145f9f81d853d552edb83ac  kernel-cmdline.conf
+6124ef09b0a91d14a960a739398aacebb1038df3781124a31c14c1377fd4e00e4ab5b1c91012e6effde34021dbd9ad2c306d01443a2469ee4fa21aa93bcf928b  modules-initfs
 "
