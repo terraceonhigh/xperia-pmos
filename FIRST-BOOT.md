@@ -45,7 +45,7 @@ microSD, boot image on `boot_a`. Raw snapshot of everything below is in
   probe with stack traces (first attempt before clocks; panel works). Phosh
   `Setting backlight on DSI-1 failed: EPROTO` — brightness control.
 
-## UFS fix (pending test)
+## UFS fix — confirmed 2026-09-21, second boot
 
 `kernel-patches/0001-arm64-dts-qcom-sm6350-sony-pdx213-enable-UFS.patch` — enables
 `&ufs_mem_hc` / `&ufs_mem_phy` with supplies from Sony's stock DTBO overlay
@@ -53,6 +53,14 @@ microSD, boot image on `boot_a`. Raw snapshot of everything below is in
 Fairphone 4's mainline override on the same PMIC set. Applied to the shared kernel
 package as pkgrel 2. DTB-only change, so `splice-dtb.py` swaps it into the existing
 card-matched boot image rather than regenerating one (keeps `pmos_root_uuid`).
+
+Result on boot: `ufshcd-qcom 1d84000.ufshc` probes, `sda` = Micron MT128GASAO4U21
+(128 GB, 4096-byte blocks), full GPT visible, `/dev/disk/by-partlabel/{modemst1,modemst2,
+fsc,fsg,boot_a,boot_b}` resolve. `rmtfs` starts clean, **modem `running` with zero
+crashes**, `wlan0` appears (ath10k loads `WLAN.HL.3.3.1` from the modem DSP), and
+`qbootctl` marks slot `a` successful. Harmless probe notes: `vdd-hba-supply` and
+`vccq-supply` "not found, assuming enabled" (neither is wired in Sony's overlay either),
+`freq-table-hz property not specified`.
 
 ## On-device credentials
 
