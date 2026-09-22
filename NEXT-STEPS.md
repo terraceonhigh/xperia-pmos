@@ -110,3 +110,23 @@ But this plan is now one config flag and a device package away from something th
 *looks like* a pmaports submission. If any of `device-sony-pdx213`,
 `firmware-sony-pdx213`, or the kconfig change is ever meant to go upstream, it has to
 be rewritten and understood independently of this material — not copied from here.
+
+## 2026-09-21: first-boot images built
+
+- `pmbootstrap install --password 1234` (numeric, keypad constraint) + `export` on
+  humboldt, UI phosh, systemd default, our `build/pdx213_key.pub` installed for `user`.
+- **Dropped `deviceinfo_flash_sparse`** — a Fairphone leftover. With it, the exported
+  rootfs is an Android sparse image, which cannot be `dd`'d to a card and which shifts
+  every offset (my first pair-check read garbage partition entries for exactly this
+  reason). Raw GPT image now.
+- `paircheck-bootimg.py boot.img rootfs.img`: parses the boot header, reports kernel
+  compression, and confirms `pmos_root_uuid`/`pmos_boot_uuid` in the cmdline match the
+  ext4 UUIDs inside the rootfs image. The silent failure mode it guards against is a
+  black screen with the initramfs waiting forever for a root that isn't there.
+- Stock Sony `boot.000` carries a **raw** arm64 `Image` (no gzip). pmOS ships gzip.
+  March's "gzip bootloops" was observed with stock AVB still enabled — "device is
+  corrupt" is AVB's message — so gzip on this ABL is unproven either way. Rollback is
+  one `fastboot flash boot_a build/boot-pmos-hybrid-touch.img`.
+- Images: `build/boot-pmos-sm6350-7.2.0-2026-09-21.img`,
+  `build/rootfs-pmos-sm6350-2026-09-21.img` (2.0 GiB raw; initramfs grows root on
+  first boot).
