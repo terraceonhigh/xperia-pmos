@@ -1,0 +1,20 @@
+From: local <local@localhost>
+Subject: [PATCH] soc: qcom: pd_mapper: sm6350: add modem root_pd (gps, pdr_enabled)
+
+Sony pdx213's modemr.jsn declares msm/modem/root_pd (instance 180) with
+tms/servreg, tms/pdr_enabled and gps/gps_service. The sm6350 table only has
+wlan_pd, and the modem watchdog fires ~40 s after boot with
+"DOG detects stalled initialization". Same domain set as sm6115/sm7150.
+
+LOCAL ONLY - do not upstream (pmOS AI policy).
+---
+--- a/drivers/soc/qcom/qcom_pd_mapper.c
++++ b/drivers/soc/qcom/qcom_pd_mapper.c
+@@ -517,6 +517,7 @@
+ 	&adsp_root_pd,
+ 	&adsp_sensor_pd,
+ 	&cdsp_root_pd,
++	&mpss_root_pd_gps_pdr,
+ 	&mpss_wlan_pd,
+ 	NULL,
+ };

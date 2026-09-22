@@ -147,3 +147,39 @@ table. Still open, roughly in order:
 5. Small ones: backlight `EPROTO`; DSI PLL first-probe errors; USB DHCP race (report
    upstream? — no, policy; just document the workaround); `pkgrel` bumps on the shared
    kernel config are local forever.
+
+### Telephony — where it stands after 2026-09-21 night
+
+Not rmtfs/EFS anymore (that was crash #1 on the first boot and UFS fixed it). The modem now
+comes up, runs WLAN firmware fine, then the modem-side watchdog fires **~40 s after each
+start**: `dog_hal_common.c:180: DOG detects stalled initialization, triage with IMAGE OWNER`.
+Recovery loops forever; `msm-modem-uim-selection` (waits 45 s, QMI `uim` → `Internal`) fails,
+so ModemManager never starts.
+
+Tried and **ruled out**:
+- `qcom_pd_mapper` SM6350 table missing `msm/modem/root_pd`. Sony's `modemr.jsn` declares it
+  (instance 180: `tms/servreg`, `tms/pdr_enabled`, `gps/gps_service`); the in-kernel table
+  (and torvalds master) has only `wlan_pd` for sm6350. Added `&mpss_root_pd_gps_pdr`
+  (`kernel-patches/0002-…`, kernel r3, verified loaded as `#4`). **No change** — same DOG,
+  same cadence. Left in place (harmless, matches the jsn). Untried variant: plain
+  `mpss_root_pd` (no gps) — low odds given the jsn, but it's the cheap remaining pd-mapper move.
+
+Still-open suspects, cheapest first:
+1. **IPA firmware choice.** Package ships `lagoon_ipa_fws.*` → `ipa_fws.mbn`; vendor also has
+   a plain `ipa_fws.*` set (different `.b01` size). IPA logs no error, but `qcom,gsi-loader =
+   "self"` means a wrong blob fails quietly on the modem side. Test: swap the file on the
+   phone (`/usr/lib/firmware/qcom/sm6350/sony/pdx213/ipa_fws.mbn`), reboot. Or disable IPA
+   in the DTS for one boot (DTB-only → `splice-dtb.py`): if the modem stays up, it's IPA.
+2. **tqftpserv.** Modem writes `server_check.txt`/`mcfg.tmp` (so QRTR works) and asks for
+   `ota_firewall/ruleset` (missing, rejected — usually harmless). Check what else it asks for
+   with `tqftpserv` in verbose mode, and that `modem_pr/mcfg/configs` is where it looks.
+3. **Compare against the March Mobian setup** that had a stable modem: kernel 6.12, userspace
+   `pd-mapper` + `tqftpserv` + `rmtfs`, IPA *not* enabled, rmtfs-mem at `0x9b000000` (upstream:
+   `0xfe901000`). Two real differences: IPA, and the rmtfs-mem address.
+4. Sony's own ramdump/DIAG would name the stalled task; no path to that without downstream tools.
+
+Kernel state on the card: **r3** (UFS + pd-mapper patches). Boots and runs everything else.
+Rollback pair kept in `build/`: `boot-pmos-sm6350-7.2.0-r2-ufs-2026-09-21.img` + r2 apk.
+`deviceinfo_flash_kernel_on_update` is **false** on the device (set before installing r3 so
+boot-deploy would build `/boot/boot.img` without writing `boot_a` itself). Never run
+`apk upgrade --prune/--available`: it would remove our local device/firmware packages.
