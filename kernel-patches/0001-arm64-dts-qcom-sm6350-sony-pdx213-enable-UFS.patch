@@ -1,0 +1,36 @@
+From: local <local@localhost>
+Subject: [PATCH] arm64: dts: qcom: sm6350-sony-xperia-lena-pdx213: enable UFS
+
+Wire the UFS host controller and PHY supplies. Rails match Sony's downstream
+DTBO (vcc=L7E, vccq2=L12A, vdda-phy=L18A, vdda-pll=L22A) and Fairphone 4's
+mainline override on the same PMIC set. No reset-gpios: Sony's overlay has
+none; the GCC_UFS_PHY_BCR reset in sm6350.dtsi sufficed in the March 2026
+Mobian port.
+
+LOCAL ONLY - do not upstream (pmOS AI policy).
+---
+--- a/arch/arm64/boot/dts/qcom/sm6350-sony-xperia-lena-pdx213.dts
++++ b/arch/arm64/boot/dts/qcom/sm6350-sony-xperia-lena-pdx213.dts
+@@ -856,6 +856,22 @@
+ 	};
+ };
+ 
++&ufs_mem_hc {
++	vcc-supply = <&pm6150l_l7>;
++	vcc-max-microamp = <800000>;
++	vccq2-supply = <&pm6350_l12>;
++	vccq2-max-microamp = <800000>;
++
++	status = "okay";
++};
++
++&ufs_mem_phy {
++	vdda-phy-supply = <&pm6350_l18>;
++	vdda-pll-supply = <&pm6350_l22>;
++
++	status = "okay";
++};
++
+ &usb_1 {
+ 	status = "okay";
+ };
