@@ -130,3 +130,20 @@ be rewritten and understood independently of this material — not copied from h
 - Images: `build/boot-pmos-sm6350-7.2.0-2026-09-21.img`,
   `build/rootfs-pmos-sm6350-2026-09-21.img` (2.0 GiB raw; initramfs grows root on
   first boot).
+
+## 2026-09-21 evening: closed
+
+First mainline boot worked; UFS patch the same evening unblocked modem, WiFi and
+`qbootctl`. Everything above this line is done. See `FIRST-BOOT.md` and the README status
+table. Still open, roughly in order:
+
+1. **Telephony.** `msm-modem-uim-selection` waits 45 s, QMI `uim` answers `Internal`,
+   ModemManager never starts. SIM is present (Macau). First check: restart the two units
+   after the modem has been up a few minutes; if it then works, it's a boot-order timeout.
+2. **Audio.** No sound node in the pdx213 DTS. ADSP is running and the q6 modules load;
+   needs the `sound {}` machine node + codec (Sony downstream DTBO has it).
+3. **Sensors.** Extract `hexagonfs` from the vendor image, re-add `hexagonrpcd`.
+4. **Bluetooth pairing test.** Controller is up.
+5. Small ones: backlight `EPROTO`; DSI PLL first-probe errors; USB DHCP race (report
+   upstream? — no, policy; just document the workaround); `pkgrel` bumps on the shared
+   kernel config are local forever.

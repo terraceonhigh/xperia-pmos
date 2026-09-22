@@ -4,52 +4,36 @@ postmarketOS device packages for the Sony Xperia 10 III (codename: pdx213, SoC: 
 
 ## Status
 
-**First GUI: 2026-03-18 22:30 PST** — greetd login screen visible on device
-
-postmarketOS edge with Phosh, running a hybrid boot: Mobian 6.12.68 kernel (for working display) + pmOS initramfs + pmOS rootfs on SD card.
-
-### Current state: Hybrid boot (Mobian 6.12.68 kernel + pmOS rootfs)
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Display | **Yes** | simpledrm framebuffer, greetd/Phosh login screen renders |
-| Phosh/greetd | **Yes** | Login screen visible, software rendering (llvmpipe) |
-| Rootfs mount | **Yes** | SD card (mmcblk0), ext4, 29.5GB |
-| RAM | **Yes** | 5.3GB detected, 8GB zram swap |
-| Touch | **Yes** | Confirmed on the Phosh greeter: on-screen keyboard takes input. See [touch/](touch/) |
-| USB networking | **No** | Mobian kernel has RNDIS only, pmOS expects ECM |
-| WiFi | **No** | ath10k module version mismatch |
-| Modem | **No** | Module version mismatch |
-| GPU accel | **No** | msm.ko intentionally not loaded (keeps simpledrm alive) |
-
-### Why hybrid?
-
-The pmOS 6.19.0 kernel (`linux-postmarketos-qcom-sm6350`) has `CONFIG_DRM_MSM` **built-in**. It takes over fb0 from simpledrm during boot, then fails to drive the DSI panel (`DSI PLL(0) lock failed, status=0x00000000`), leaving the screen permanently black.
-
-The Mobian 6.12.68 kernel has `CONFIG_DRM_MSM=m` (module). Since msm.ko doesn't auto-load, simpledrm keeps the bootloader-initialized framebuffer alive. Phosh renders on it via software rendering.
-
-### Previous state: pmOS kernel 6.19.0 (SSH only, no display)
+**Mainline postmarketOS since 2026-09-21.** Kernel `linux-postmarketos-qcom-sm6350` 7.2.0
+(the packaged [sm6350-mainline](https://github.com/sm6350-mainline/linux) tree Fairphone 4
+uses) with two local changes: `CONFIG_TOUCHSCREEN_S6SY761=m`, and a DTS patch enabling UFS
+(`kernel-patches/`). Phosh, systemd, rootfs on microSD. Full record in [FIRST-BOOT.md](FIRST-BOOT.md).
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Kernel boot | **Yes** | 6.19.0, multi-core, boots in ~1s |
-| Rootfs mount | **Yes** | SD card (mmcblk0), ext4, pmOS_root label |
-| USB networking | **Yes** | CDC ECM, 172.16.42.1, SSH works |
-| Display | **No** | msm_dpu built-in, kills simpledrm, DSI PLL fails |
-| GPU | **No** | a615_zap.mbn loads but DSI PLL can't lock |
+| Display | **Yes** | real DRM: `msm_dpu` + `panel-samsung-sofef01` |
+| GPU | **Yes** | freedreno, OpenGL ES 3.2, Mesa 26.2 |
+| Touch | **Yes** | in-tree `s6sy761` |
+| Phosh session | **Yes** | apps launch after `apk upgrade pango` (edge skew at build time) |
+| Battery / charging | **Yes** | PM7250B charger + `qcom_qg` fuel gauge |
+| Internal storage (UFS) | **Yes** | 128 GB Micron, all partitions — needs the local DTS patch |
+| Modem (remoteproc) | **Yes** | stable once UFS gives `rmtfs` its partitions |
+| WiFi | **Yes** | WCN3990, associates, IPv4+IPv6, internet |
+| Bluetooth | Controller up | `hci0` present; pairing untested |
+| USB networking | **Yes** | NCM, macOS-native; DHCP races at boot (see FIRST-BOOT.md) |
+| Telephony (ModemManager) | **No** | `msm-modem-uim-selection` times out; QMI `uim` returns `Internal`. Next item. |
+| Audio | **No** | no sound node in the DTS |
+| Sensors | **No** | no `hexagonfs` extracted yet |
+| Camera | Untested | |
 
-### What works (verified on Mobian 6.12.68)
+### History
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Display | Working | simpledrm (bootloader framebuffer) |
-| Touchscreen | Working | Samsung s6sy761, GPIO toggle workaround |
-| WiFi | Working | WCN3990/ath10k_snoc |
-| Modem | Working | MPSS via remoteproc + rmtfs |
-| UFS storage | Working | Internal storage, 79 partitions |
-| Bluetooth | Partial | Firmware loads, UART setup fails (EILSEQ) |
-| Battery | Partial | PM7250B DTS verified, needs kernel module |
-| GPU | Not yet | msm.ko exists, needs DRM setup |
+- 2026-03-18: first GUI on a hybrid boot (Mobian 6.12.68 kernel + pmOS rootfs), simpledrm.
+- 2026-08-31: touch on the hybrid boot via an out-of-tree module (see [touch/](touch/)).
+- 2026-09-08: found the packaged sm6350 kernel already had everything but one kconfig flag
+  ([NEXT-STEPS.md](NEXT-STEPS.md)).
+- 2026-09-21: first mainline boot; UFS patch the same evening. The hybrid boot and the
+  module work are obsolete but kept as history.
 
 ## Pitfalls (read before you start)
 
@@ -73,7 +57,11 @@ pmbootstrap requires `kpartx` and `losetup` (Linux-only). On Apple Silicon, it a
 
 **Fix:** `# Maintainer: username <user@example.com>`
 
-### 4. boot-deploy ignores deviceinfo (CRITICAL)
+### 4. boot-deploy ignores deviceinfo (CRITICAL) — RESOLVED, and the premise was wrong
+
+**2026-09-21:** pmbootstrap 3.11 generated header v0 at base `0x00000000` and it booted. Stock Sony
+`boot.000` is header **v2** at base `0x00000000`. Neither v2 nor base 0 is the problem this pitfall
+describes; the March failures were AVB (stock `vbmeta`) rejecting unsigned images. Kept for history:
 
 As of pmbootstrap 3.9.0, `boot-deploy` generates boot.img with **header v2 and base 0x0** regardless of what `deviceinfo` says. The generated boot.img will NOT boot on pdx213.
 
@@ -107,7 +95,9 @@ python3 -c "f=open('boot.img','rb');d=f.read(4096);print(d[64:64+512].split(b'\x
 ```
 Or run `lsblk -f` on the written SD card.
 
-### 6. Exported rootfs is a sparse image
+### 6. Exported rootfs is a sparse image — RESOLVED: it was `deviceinfo_flash_sparse="true"`
+
+A Fairphone 4 leftover. Removed from `deviceinfo`; the export is a raw GPT image now. Kept for history:
 
 `pmbootstrap export` produces an Android sparse image (magic `0xed26ff3a`). If you `dd` it directly to an SD card, you get garbage — no partition table, no filesystem.
 
@@ -146,7 +136,7 @@ The kernel expects the zap shader at `qcom/sm6350/sony/pdx213/a615_zap.mbn`. The
 
 The correct approach is to use `pil-squasher` to produce a proper `.mbn` from the `.mdt` + `.b*` files. This is what the FP4 firmware package does.
 
-### 10. Phone internet requires NAT on the host
+### 10. Phone internet requires NAT on the host — or `touch/apk-proxy.py`, or just WiFi now
 
 pmOS USB networking (172.16.42.0/24) has no internet access by default. You need NAT on the host machine to install packages:
 
@@ -219,21 +209,24 @@ The Mobian kernel has `CONFIG_DRM_MSM=m` (module) so simpledrm keeps the bootloa
 
 **Trade-off**: Display works, but kernel modules from pmOS rootfs (6.19.0) won't load on the 6.12.68 kernel. Touch, WiFi, modem are all modules and won't work until matching 6.12.68 modules are installed.
 
-## Boot format (critical)
+## Boot format
 
-Sony ABL bootloader on pdx213 requires:
-- **Header version 0** (NOT v2)
-- **Base address 0x10000000** (NOT 0x0)
-- **gzip-compressed kernel + appended DTB**
-- Page size 4096
+Verified 2026-09-21 by booting: header **v0**, base **`0x00000000`** (`kernel_addr 0x8000`,
+`ramdisk 0x1000000`, `tags 0x100`), page size 4096, **gzip** kernel with appended DTB — i.e.
+exactly what pmbootstrap generates from the current `deviceinfo`. Stock Sony ships header v2 at the
+same base with a raw kernel. The earlier belief that base `0x10000000` and header v0 were required
+came from Mobian's image, which the hybrid boot inherited; "device is corrupt" was AVB, disabled
+since 2026-08 on all four `vbmeta` partitions.
 
-Using header v2 or base 0x0 causes silent boot failure.
+`paircheck-bootimg.py boot.img rootfs.img` checks header fields and that the cmdline's
+`pmos_root_uuid`/`pmos_boot_uuid` match the rootfs image. `splice-dtb.py` swaps only the DTB in an
+existing image for DTB-only kernel changes.
 
 ## Packages
 
 ### device-sony-pdx213
 
-Device package with corrected boot parameters, based on the Fairphone 4 (same SoC) as reference. Uses `linux-postmarketos-qcom-sm6350` shared kernel.
+Device package based on Fairphone 4 (same SoC), on the shared `linux-postmarketos-qcom-sm6350` kernel. Cmdline lives in `kernel-cmdline.conf` (the `deviceinfo_kernel_cmdline*` fields are schema-obsolete). **Local only** — postmarketOS's AI policy forbids submitting this work.
 
 ### firmware-sony-pdx213
 
