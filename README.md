@@ -6,8 +6,10 @@ postmarketOS device packages for the Sony Xperia 10 III (codename: pdx213, SoC: 
 
 **Mainline postmarketOS since 2026-09-21.** Kernel `linux-postmarketos-qcom-sm6350` 7.2.0
 (the packaged [sm6350-mainline](https://github.com/sm6350-mainline/linux) tree Fairphone 4
-uses) with two local changes: `CONFIG_TOUCHSCREEN_S6SY761=m`, and a DTS patch enabling UFS
-(`kernel-patches/`). Phosh, systemd, rootfs on microSD. Full record in [FIRST-BOOT.md](FIRST-BOOT.md).
+uses) with three local changes: `CONFIG_TOUCHSCREEN_S6SY761=m`, a DTS patch enabling UFS, and a
+`qcom_pd_mapper` patch adding the modem root PD (`kernel-patches/`; kernel pkgrel r3 on the card).
+Phosh, systemd, rootfs on microSD. Full record in [FIRST-BOOT.md](FIRST-BOOT.md); open work and the
+modem watchdog investigation in [NEXT-STEPS.md](NEXT-STEPS.md).
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -17,11 +19,11 @@ uses) with two local changes: `CONFIG_TOUCHSCREEN_S6SY761=m`, and a DTS patch en
 | Phosh session | **Yes** | apps launch after `apk upgrade pango` (edge skew at build time) |
 | Battery / charging | **Yes** | PM7250B charger + `qcom_qg` fuel gauge |
 | Internal storage (UFS) | **Yes** | 128 GB Micron, all partitions — needs the local DTS patch |
-| Modem (remoteproc) | **Yes** | stable once UFS gives `rmtfs` its partitions |
-| WiFi | **Yes** | WCN3990, associates, IPv4+IPv6, internet |
+| Modem (remoteproc) | **Partial** | UFS fixed the `rmtfs`/EFS crash loop, but the modem watchdog now fires ~40 s after every start (`DOG detects stalled initialization`) and it restarts in a loop. See NEXT-STEPS.md. |
+| WiFi | **Yes** | WCN3990, associates, IPv4+IPv6, internet. Its firmware runs on the modem DSP, so the watchdog loop above may drop the link (not yet measured). |
 | Bluetooth | Controller up | `hci0` present; pairing untested |
 | USB networking | **Yes** | NCM, macOS-native; DHCP races at boot (see FIRST-BOOT.md) |
-| Telephony (ModemManager) | **No** | `msm-modem-uim-selection` times out; QMI `uim` returns `Internal`. Next item. |
+| Telephony (ModemManager) | **No** | blocked by the modem watchdog loop: `msm-modem-uim-selection` times out, QMI `uim` returns `Internal`. Next item. |
 | Audio | **No** | no sound node in the DTS |
 | Sensors | **No** | no `hexagonfs` extracted yet |
 | Camera | Untested | |
@@ -179,9 +181,13 @@ The pmOS initramfs does not understand `pmos_boot`/`pmos_root` — it only looks
 python3 -c "f=open('boot.img','rb');d=f.read(4096);print(d[64:64+512].split(b'\x00')[0])"
 ```
 
-## Hybrid boot (workaround for DSI PLL failure)
+## Hybrid boot (obsolete since 2026-09-21, kept as history)
 
-Until the pmOS kernel's DSI PLL issue is fixed, use the Mobian 6.12.68 kernel with the pmOS rootfs:
+> Superseded by the mainline boot above. The packaged sm6350 7.2.0 kernel drives the panel
+> through `msm_dpu`; the DSI PLL errors are now a harmless first-probe note. Only use this for
+> rollback archaeology.
+
+Originally, until the pmOS kernel's DSI PLL issue was fixed, this used the Mobian 6.12.68 kernel with the pmOS rootfs:
 
 ```bash
 # Combine Mobian kernel (gzip) + Mobian patched DTB
@@ -246,7 +252,11 @@ pmbootstrap init          # select sony-pdx213, console, edge
 pmbootstrap install
 pmbootstrap export
 
-# Then manually rebuild boot.img (see Pitfall #4 above)
+# The generated boot.img is correct as-is (Pitfall #4 is resolved; see "Boot format").
+# Check it against the rootfs before flashing:
+python3 paircheck-bootimg.py boot.img rootfs.img
+# Also apply kernel-patches/ to linux-postmarketos-qcom-sm6350 and set
+# CONFIG_TOUCHSCREEN_S6SY761=m in its config, bumping pkgrel (see NEXT-STEPS.md).
 ```
 
 ## Firmware extraction

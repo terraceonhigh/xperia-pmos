@@ -1,4 +1,26 @@
-# Next: reuse the packaged sm6350 kernel instead of building one
+# Next steps
+
+## Current state (2026-09-26)
+
+The plan below is done: the phone boots mainline pmOS (kernel r3 on the card, boot image
+`build/boot-pmos-sm6350-7.2.0-r3-pdmapper-2026-09-21.img`). Display, GPU, touch, Phosh, battery,
+UFS, WiFi and USB networking work. The live problem is the **modem watchdog loop** (DOG fires
+~40 s after every modem start), which blocks telephony. The open list and the ranked suspects are
+at the bottom of this file ("2026-09-21 evening: closed" onward).
+
+Every remaining modem test needs the phone on USB (swap `ipa_fws.mbn`, splice a DTB with IPA
+disabled, run `tqftpserv` verbose), so the next session has to be hands-on. Builds run on the
+Linux pmbootstrap host (humboldt), not on this Mac (Pitfall #1).
+
+Things that don't need the phone: diff the March Mobian DTB against `build/pdx213-r2-ufs.dtb`
+for the IPA node and the rmtfs-mem address (suspect 3 below), and prepare an IPA-disabled DTB for
+`splice-dtb.py` (suspect 1). The Mobian `device-patched.dtb` is not on this Mac any more; it
+comes back via `../xperia-mobian/restore.sh` (GitHub Release download), and its patch scripts
+(`patch-rmtfs.py` for the `0x9b000000` rmtfs-mem node, `patch-remoteproc.py`, `patch-wifi.py`) show the edits. Needs `dtc` (not installed here).
+
+---
+
+# Original plan: reuse the packaged sm6350 kernel instead of building one
 
 Written 2026-08-31, rewritten 2026-09-08 after finding that almost everything this
 plan set out to build already ships in postmarketOS's package tree today. The short

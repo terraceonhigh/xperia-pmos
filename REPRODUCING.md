@@ -5,6 +5,12 @@ installation with a visible GUI (Phosh/greetd) on the Sony Xperia 10 III.
 
 Last verified: **2026-03-18 22:30 PST**
 
+> **Superseded (2026-09-21).** This guide reproduces the March hybrid boot (Mobian 6.12.68
+> kernel + pmOS rootfs). The port now boots the packaged mainline kernel
+> `linux-postmarketos-qcom-sm6350` 7.2.0; see README.md (Status, Boot format, Building),
+> FIRST-BOOT.md and NEXT-STEPS.md. The firmware-extraction and SD-card steps below are
+> still broadly useful; the boot.img assembly steps are not.
+
 ## Prerequisites
 
 ### Hardware
